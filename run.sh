@@ -1,5 +1,4 @@
 #!/usr/bin/with-contenv bashio
-# shellcheck shell=bash
 
 bashio::log.info "Starting NoLongerEvil Add-on..."
 
@@ -10,6 +9,7 @@ ENTRY_KEY_TTL_SECONDS=$(bashio::config 'entry_key_ttl_seconds')
 # Container always listens on these ports
 PROXY_PORT=8000
 CONTROL_PORT=8081
+INGRESS_PORT=8082
 
 # Get API_ORIGIN from user config (REQUIRED - must include port)
 if bashio::config.has_value 'api_origin'; then
@@ -21,12 +21,43 @@ else
     exit 1
 fi
 
+# Check if MQTT service is available (REQUIRED)
+bashio::log.info "Checking for MQTT service..."
+if bashio::services "mqtt" "host" > /dev/null 2>&1; then
+    bashio::log.info "MQTT service IS available from Supervisor"
+    
+    # Extract MQTT credentials from Supervisor services API
+    export MQTT_HOST=$(bashio::services "mqtt" "host")
+    export MQTT_PORT=$(bashio::services "mqtt" "port")
+    export MQTT_USER=$(bashio::services "mqtt" "username")
+    export MQTT_PASSWORD=$(bashio::services "mqtt" "password")
+    
+    bashio::log.info "MQTT service configured:"
+    bashio::log.info "  Host: ${MQTT_HOST}"
+    bashio::log.info "  Port: ${MQTT_PORT}"
+    bashio::log.info "  User: ${MQTT_USER}"
+else
+    bashio::log.fatal "MQTT service is NOT available!"
+    bashio::log.fatal "This add-on requires the Mosquitto broker add-on."
+    bashio::log.fatal "Please install and start the Mosquitto broker add-on first."
+    bashio::log.fatal ""
+    bashio::log.fatal "Installation steps:"
+    bashio::log.fatal "  1. Go to Settings > Add-ons > Add-on Store"
+    bashio::log.fatal "  2. Search for 'Mosquitto broker'"
+    bashio::log.fatal "  3. Install the official Mosquitto broker add-on"
+    bashio::log.fatal "  4. Start the Mosquitto broker"
+    bashio::log.fatal "  5. Restart this add-on"
+    exit 1
+fi
+
 # Set environment variables for Node.js
 export API_ORIGIN
 export PROXY_PORT
 export CONTROL_PORT
+export INGRESS_PORT
 export ENTRY_KEY_TTL_SECONDS
 export DEBUG_LOGGING
+export DEBUG_LOGS_DIR=/data/debug-logs
 export SQLITE3_ENABLED=true
 export SQLITE3_DB_PATH=/data/database.sqlite
 
@@ -34,11 +65,36 @@ bashio::log.info "Configuration:"
 bashio::log.info "  API_ORIGIN: ${API_ORIGIN}"
 bashio::log.info "  PROXY_PORT: ${PROXY_PORT} (container listen port)"
 bashio::log.info "  CONTROL_PORT: ${CONTROL_PORT}"
+bashio::log.info "  INGRESS_PORT: ${INGRESS_PORT}"
 bashio::log.info "  DEBUG_LOGGING: ${DEBUG_LOGGING}"
+bashio::log.info "  MQTT_HOST: ${MQTT_HOST}"
+bashio::log.info "  MQTT_PORT: ${MQTT_PORT}"
 bashio::log.info ""
 bashio::log.info "Nest devices will connect to: ${API_ORIGIN}"
 
-# Change to app directory and start the Node.js server
-cd /app || exit 1
-bashio::log.info "Starting Node.js server..."
-exec node dist/index.js
+# Start the vendor API server FIRST (creates database tables)
+bashio::log.info "Starting API server..."
+cd /server || exit 1
+node dist/index.js &
+SERVER_PID=$!
+bashio::log.info "API server started (PID: ${SERVER_PID})"
+
+# Wait for server to initialize database
+bashio::log.info "Waiting for database initialization..."
+sleep 3
+
+# Start the frontend (Ingress UI + MQTT initialization)
+bashio::log.info "Starting frontend web UI..."
+cd /frontend || exit 1
+node dist/index.js &
+FRONTEND_PID=$!
+bashio::log.info "Frontend started (PID: ${FRONTEND_PID})"
+
+# Wait for any process to exit (both should stay running)
+wait -n $FRONTEND_PID $SERVER_PID
+EXIT_CODE=$?
+
+# If one exits, kill the other
+bashio::log.warning "A process exited with code ${EXIT_CODE}, shutting down..."
+kill $FRONTEND_PID $SERVER_PID 2>/dev/null
+exit $EXIT_CODE
