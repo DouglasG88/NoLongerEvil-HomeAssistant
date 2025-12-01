@@ -1,11 +1,15 @@
 ---
 name: "NoLongerEvil HomeAssistant"
 description: "NoLongerEvil Nest API - Self-hosted Nest thermostat control"
-version: "0.0.2"
+version: "0.0.4"
 slug: "nolongerevil"
 init: false
+hassio_api: true
+hassio_role: default
+services:
+  - mqtt:need
 ingress: true
-ingress_port: 8081
+ingress_port: 8082
 arch:
   - aarch64
   - amd64
@@ -14,10 +18,20 @@ arch:
   - i386
 startup: services
 ports:
-  8081/tcp: 8081
-  80/tcp: 8000
+  8082/tcp: null
+  8081/tcp: null
+  8000/tcp: 9543
 ports_description:
-  8081/tcp: "Control API (web interface)"
-  80/tcp: "Proxy port (Nest device communication)"
+  8082/tcp: "Frontend UI (Ingress only)"
+  8081/tcp: "Control API (internal only)"
+  8000/tcp: "Proxy port (Nest device communication)"
 map:
   - addon_config
+options:
+  api_origin: "http://homeassistant.local:9543"
+  entry_key_ttl_seconds: 3600
+  debug_logging: false
+schema:
+  api_origin: str
+  entry_key_ttl_seconds: int
+  debug_logging: bool
