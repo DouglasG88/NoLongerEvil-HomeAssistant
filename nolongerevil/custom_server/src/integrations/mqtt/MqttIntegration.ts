@@ -420,7 +420,12 @@ export class MqttIntegration extends BaseIntegration {
             await this.updateSharedValue(serial, sharedObj, 'target_humidity', roundedHumidity);
             console.log(`[MQTT:${this.userId}] Set humidity for ${serial} to ${roundedHumidity}%`);
           }
-          break;
+          if (deviceObj.value.target_humidity_enabled === false) {
+            console.log(`[MQTT:${this.userId}] Humidity slider moved; auto-enabling humidifier for ${serial}`);
+            await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', true);
+          }
+        }
+        break;
 
         case 'humidifier_enabled':
           // HA sends "true" or "false" based on our discovery payload
