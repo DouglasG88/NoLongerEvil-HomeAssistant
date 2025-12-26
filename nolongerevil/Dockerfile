@@ -6,9 +6,9 @@ RUN apk add --no-cache nodejs npm
 
 # Build vendor server
 WORKDIR /server
-COPY vendor/nolongerevil/server/package*.json ./
-COPY vendor/nolongerevil/server/tsconfig.json ./
-COPY vendor/nolongerevil/server/src ./src
+COPY custom_server/package*.json ./
+COPY custom_server/tsconfig.json ./
+COPY custom_server/src ./src
 RUN npm install && npm run build
 
 # Build frontend
