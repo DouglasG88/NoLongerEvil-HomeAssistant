@@ -413,12 +413,22 @@ export class MqttIntegration extends BaseIntegration {
           
         case 'target_humidity':
           const humidity = parseFloat(valueStr);
-          if (!isNaN(humidity)) {
-            await this.updateSharedValue(serial, sharedObj, 'target_humidity', humidity);
-            await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', true);
-            console.log(`[MQTT:${this.userId}] Set humidity for ${serial} to ${humidity}%`);
+          const step = 5;
+          const roundedHumidity = Math.round(humidity / step) * step;
+
+          if (!isNaN(roundedHumidity) && roundedHumidity >= 10 && roundedHumidity <= 60) {
+            await this.updateSharedValue(serial, sharedObj, 'target_humidity', roundedHumidity);
+            console.log(`[MQTT:${this.userId}] Set humidity for ${serial} to ${roundedHumidity}%`);
           }
           break;
+
+        case 'humidifier_enabled':
+          // HA sends "true" or "false" based on our discovery payload
+          const isEnabled = valueStr === 'true';
+          await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', isEnabled);
+          console.log(`[MQTT:${this.userId}] Set humidifier enabled to: ${isEnabled}`);
+          break;
+          
         case 'fan_mode':
           if (valueStr === 'on') {
             // Turn fan on: activate control state and set timer
