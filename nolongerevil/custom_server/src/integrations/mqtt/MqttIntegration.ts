@@ -708,7 +708,11 @@ export class MqttIntegration extends BaseIntegration {
 
       const humEnabled = device.target_humidity_enabled === true; 
       await this.publish(`${prefix}/${serial}/ha/humidifier_enabled`, String(humEnabled), { retain: true, qos: 0 });
-
+      const isRunning = device.humidifier_state === 1 || device.humidifier_state === true;
+      const humAction = isRunning ? 'humidifying' : 'idle';
+      
+      await this.publish(`${prefix}/${serial}/ha/humidifier_action`, humAction, { retain: true, qos: 0 });
+      
       const haMode = nestModeToHA(shared.target_temperature_type);
       await this.publish(`${prefix}/${serial}/ha/mode`, haMode, { retain: true, qos: 0 });
 
