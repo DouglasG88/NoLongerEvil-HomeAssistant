@@ -73,7 +73,7 @@ constructor(
     
 TypeScript
 
-  constructor(
+constructor(
     userId: string,
     config: MqttConfig,
     deviceState: DeviceStateService,
@@ -86,8 +86,8 @@ TypeScript
       discoveryPrefix: 'homeassistant',
       clientId: `nolongerevil-${userId}`,
       publishRaw: true, 
-      homeAssistantDiscovery: false, 
-      ...config, // User config overrides defaults here
+      homeAssistantDiscovery: true, 
+      ...config,
     };
 
     // Correct way: Perform the override AFTER the object is created
@@ -101,43 +101,43 @@ TypeScript
   /**
    * Initialize MQTT connection
    */
-async initialize(): Promise<void> {
-  console.log(`[MQTT:${this.userId}] Initializing MQTT integration...`);
+  async initialize(): Promise<void> {
+    console.log(`[MQTT:${this.userId}] Initializing MQTT integration...`);
 
-  try {
-    await this.loadUserDevices();
-    await this.connectToBroker();
+    try {
+      await this.loadUserDevices();
+      await this.connectToBroker();
 
-    if (this.client) {
-      // --- WAIT LOOP START ---
-      let attempts = 0;
-      const maxAttempts = 50; // 50 * 100ms = 5 seconds max wait
-      
-      while (!this.client.connected && attempts < maxAttempts) {
-        await new Promise((resolve) => setTimeout(resolve, 100);
-        attempts++;
+      if (this.client) {
+        // --- WAIT LOOP START ---
+        let attempts = 0;
+        const maxAttempts = 50; // 50 * 100ms = 5 seconds max wait
+        
+        while (!this.client.connected && attempts < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          attempts++;
+        }
+
+        if (!this.client.connected) {
+          console.warn(`[MQTT:${this.userId}] Warning: Proceeding without confirmed connection after 5s`);
+        } else {
+          console.log(`[MQTT:${this.userId}] Connection confirmed after ${attempts * 100}ms`);
+        }
+        // --- WAIT LOOP END ---
+
+        await this.subscribeToCommands();
+        await this.publishDiscoveryMessages();
+        await this.publishInitialState();
       }
 
-      if (!this.client.connected) {
-        console.warn(`[MQTT:${this.userId}] Warning: Proceeding without confirmed connection after 5s`);
-      } else {
-        console.log(`[MQTT:${this.userId}] Connection confirmed after ${attempts * 100}ms`);
-      }
-      // --- WAIT LOOP END ---
-
-      await this.subscribeToCommands();
-      await this.publishDiscoveryMessages();
-      await this.publishInitialState();
+      this.startDeviceWatching();
+      this.isReady = true;
+      console.log(`[MQTT:${this.userId}] Integration initialized successfully`);
+    } catch (error) {
+      console.error(`[MQTT:${this.userId}] Failed to initialize:`, error);
+      throw error;
     }
-
-    this.startDeviceWatching();
-    this.isReady = true;
-    console.log(`[MQTT:${this.userId}] Integration initialized successfully`);
-  } catch (error) {
-    console.error(`[MQTT:${this.userId}] Failed to initialize:`, error);
-    throw error;
   }
-}
   /**
    * Start polling for device changes
    */
