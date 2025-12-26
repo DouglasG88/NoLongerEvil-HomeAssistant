@@ -410,7 +410,14 @@ export async function publishThermostatDiscovery(
       `${discoveryPrefix}/binary_sensor/nest_${serial}/leaf/config`,
       leafConfig
     );
-
+    // Humidifier Entity (Slider + Toggle)
+    const humidifierConfig = buildHumidifierDiscovery(serial, deviceName, topicPrefix);
+    await publishDiscoveryMessage(
+      client,
+      `${discoveryPrefix}/humidifier/nest_${serial}/humidifier/config`,
+      humidifierConfig
+    );
+    
     console.log(`[HA Discovery] Successfully published all discovery messages for ${serial}`);
   } catch (error) {
     console.error(`[HA Discovery] Error publishing discovery for ${serial}:`, error);
