@@ -58,46 +58,18 @@ constructor(
       discoveryPrefix: 'homeassistant',
       clientId: `nolongerevil-${userId}`,
       publishRaw: true, 
-      homeAssistantDiscovery: true, // Set to true to ensure discovery runs
-      ...config,
-    };
-
-    // Force values to match your logs
-    this.config.topicPrefix = 'nolongerevil';
-    this.config.homeAssistantDiscovery = true;
-
-    this.deviceState = deviceState;
-    this.deviceStateManager = deviceStateManager;
-    this.subscriptionManager = subscriptionManager;
-  }
-    
-TypeScript
-
-constructor(
-    userId: string,
-    config: MqttConfig,
-    deviceState: DeviceStateService,
-    deviceStateManager: AbstractDeviceStateManager,
-    subscriptionManager: SubscriptionManager
-  ) {
-    super(userId, 'mqtt');
-    this.config = {
-      topicPrefix: 'nolongerevil',
-      discoveryPrefix: 'homeassistant',
-      clientId: `nolongerevil-${userId}`,
-      publishRaw: true, 
       homeAssistantDiscovery: true, 
-      ...config,
+      ...config, // User config merges here
     };
 
-    // Correct way: Perform the override AFTER the object is created
+    // Force values to match your specific hardware logs
     this.config.topicPrefix = 'nolongerevil';
     this.config.homeAssistantDiscovery = true;
+
     this.deviceState = deviceState;
     this.deviceStateManager = deviceStateManager;
     this.subscriptionManager = subscriptionManager;
   }
-
   /**
    * Initialize MQTT connection
    */
