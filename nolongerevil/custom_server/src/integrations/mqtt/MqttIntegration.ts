@@ -61,10 +61,6 @@ export class MqttIntegration extends BaseIntegration {
       homeAssistantDiscovery: true, // Default: don't publish HA formatted (user must enable)
       ...config, // User config overrides defaults
     };
-    No, that specific syntax will cause a compilation error. In TypeScript/JavaScript, you cannot place a standalone assignment like this.config.topicPrefix = 'nolongerevil'; inside an object literal { ... }.
-
-The Correct Syntax
-You must finish defining the object first, and then perform the override on a new line. Here is the correct way to write it:
 
 TypeScript
 
