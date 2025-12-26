@@ -427,6 +427,13 @@ export class MqttIntegration extends BaseIntegration {
           const isEnabled = valueStr === 'true';
           await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', isEnabled);
           console.log(`[MQTT:${this.userId}] Set humidifier enabled to: ${isEnabled}`);
+          if (isEnabled && sharedObj.value.target_humidity === -1) {
+          // If enabling and current target is -1, reset to a safe default (e.g. 45%)
+            console.log(`[MQTT:${this.userId}] Humidifier enabled but target was -1, resetting to 45%`);
+            await this.updateSharedValue(serial, sharedObj, 'target_humidity', 45);
+          }
+  
+          console.log(`[MQTT:${this.userId}] Set humidifier enabled to: ${isEnabled}`);
           break;
           
         case 'fan_mode':
@@ -686,7 +693,10 @@ export class MqttIntegration extends BaseIntegration {
         await this.publish(`${prefix}/${serial}/ha/target_temperature_high`, String(shared.target_temperature_high), { retain: true, qos: 0 });
       }
       if (shared.target_humidity !== null && shared.target_humidity !== undefined) {
-        await this.publish(`${prefix}/${serial}/ha/target_humidity`, String(shared.target_humidity), { retain: true, qos: 0 });
+      // Only publish if it's a valid percentage (0-100), filtering out -1.000000
+        if (shared.target_humidity >= 0) {
+          await this.publish(`${prefix}/${serial}/ha/target_humidity`, String(shared.target_humidity), { retain: true, qos: 0 });
+      }
       }
 
       const humEnabled = device.target_humidity_enabled === true; 
