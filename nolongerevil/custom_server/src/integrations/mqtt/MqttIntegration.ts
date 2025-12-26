@@ -54,7 +54,7 @@ export class MqttIntegration extends BaseIntegration {
   ) {
     super(userId, 'mqtt');
     this.config = {
-      topicPrefix: 'nest',
+      topicPrefix: 'nolongerevil',
       discoveryPrefix: 'homeassistant',
       clientId: `nolongerevil-${userId}`,
       publishRaw: true, // Default: publish raw Nest objects
@@ -69,30 +69,32 @@ export class MqttIntegration extends BaseIntegration {
   /**
    * Initialize MQTT connection
    */
-  async initialize(): Promise<void> {
-    console.log(`[MQTT:${this.userId}] Initializing MQTT integration...`);
+async initialize(): Promise<void> {
+  console.log(`[MQTT:${this.userId}] Initializing MQTT integration...`);
 
-    try {
-      await this.loadUserDevices();
+  try {
+    await this.loadUserDevices();
+    await this.connectToBroker();
 
-      await this.connectToBroker();
+    // The client needs a moment to transition to 'connected' 
+    // before we start flooding it with discovery and state messages.
+    if (this.client) {
+      // Small delay or a loop to wait for this.client.connected
+      await new Promise((resolve) => setTimeout(resolve, 1000));
 
       await this.subscribeToCommands();
-
       await this.publishDiscoveryMessages();
-
       await this.publishInitialState();
-
-      this.startDeviceWatching();
-
-      this.isReady = true;
-      console.log(`[MQTT:${this.userId}] Integration initialized successfully`);
-    } catch (error) {
-      console.error(`[MQTT:${this.userId}] Failed to initialize:`, error);
-      throw error;
     }
-  }
 
+    this.startDeviceWatching();
+    this.isReady = true;
+    console.log(`[MQTT:${this.userId}] Integration initialized successfully`);
+  } catch (error) {
+    console.error(`[MQTT:${this.userId}] Failed to initialize:`, error);
+    throw error;
+  }
+}
   /**
    * Start polling for device changes
    */
