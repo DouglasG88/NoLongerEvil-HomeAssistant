@@ -58,7 +58,7 @@ export class MqttIntegration extends BaseIntegration {
       discoveryPrefix: 'homeassistant',
       clientId: `nolongerevil-${userId}`,
       publishRaw: true, // Default: publish raw Nest objects
-      homeAssistantDiscovery: false, // Default: don't publish HA formatted (user must enable)
+      homeAssistantDiscovery: true, // Default: don't publish HA formatted (user must enable)
       ...config, // User config overrides defaults
     };
     No, that specific syntax will cause a compilation error. In TypeScript/JavaScript, you cannot place a standalone assignment like this.config.topicPrefix = 'nolongerevil'; inside an object literal { ... }.
@@ -103,11 +103,22 @@ async initialize(): Promise<void> {
     await this.loadUserDevices();
     await this.connectToBroker();
 
-    // The client needs a moment to transition to 'connected' 
-    // before we start flooding it with discovery and state messages.
     if (this.client) {
-      // Small delay or a loop to wait for this.client.connected
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      // --- WAIT LOOP START ---
+      let attempts = 0;
+      const maxAttempts = 50; // 50 * 100ms = 5 seconds max wait
+      
+      while (!this.client.connected && attempts < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 100);
+        attempts++;
+      }
+
+      if (!this.client.connected) {
+        console.warn(`[MQTT:${this.userId}] Warning: Proceeding without confirmed connection after 5s`);
+      } else {
+        console.log(`[MQTT:${this.userId}] Connection confirmed after ${attempts * 100}ms`);
+      }
+      // --- WAIT LOOP END ---
 
       await this.subscribeToCommands();
       await this.publishDiscoveryMessages();
