@@ -431,7 +431,6 @@ export class MqttIntegration extends BaseIntegration {
           // HA sends "true" or "false" based on our discovery payload
           const isEnabled = valueStr === 'true';
           await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', isEnabled);
-          console.log(`[MQTT:${this.userId}] Set humidifier enabled to: ${isEnabled}`);
           if (isEnabled && sharedObj.value.target_humidity === -1) {
           // If enabling and current target is -1, reset to a safe default (e.g. 45%)
             console.log(`[MQTT:${this.userId}] Humidifier enabled but target was -1, resetting to 45%`);
