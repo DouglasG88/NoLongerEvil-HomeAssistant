@@ -297,6 +297,50 @@ export function buildLeafBinarySensorDiscovery(
 /**
  * Publish all discovery messages for a thermostat
  */
+
+/**
+ * Build Home Assistant discovery payload for a Humidifier entity
+ * This provides the Slider (10-60%) and the On/Off Toggle
+ */
+export function buildHumidifierDiscovery(
+  serial: string,
+  deviceName: string,
+  topicPrefix: string
+): any {
+  return {
+    unique_id: `nolongerevil_${serial}_humidifier`,
+    name: `${deviceName} Humidifier`,
+    object_id: `nest_${serial}_humidifier`,
+
+    device: {
+      identifiers: [`nolongerevil_${serial}`],
+      name: deviceName,
+    },
+
+    // 1. The On/Off Toggle (Controls target_humidity_enabled)
+    command_topic: `${topicPrefix}/${serial}/ha/humidifier_enabled/set`,
+    state_topic: `${topicPrefix}/${serial}/ha/humidifier_enabled`,
+    payload_on: 'true',
+    payload_off: 'false',
+
+    // 2. The Slider (Controls target_humidity)
+    target_humidity_command_topic: `${topicPrefix}/${serial}/ha/target_humidity/set`,
+    target_humidity_state_topic: `${topicPrefix}/${serial}/ha/target_humidity`,
+    min_humidity: 10,
+    max_humidity: 60,
+    
+    // 3. Current Reading
+    current_humidity_topic: `${topicPrefix}/${serial}/ha/current_humidity`,
+
+    device_class: 'humidifier',
+    origin: {
+        name: 'NoLongerEvil',
+        sw_version: '1.0.0'
+    },
+    qos: 1
+  };
+}
+
 export async function publishThermostatDiscovery(
   client: mqtt.MqttClient,
   serial: string,
