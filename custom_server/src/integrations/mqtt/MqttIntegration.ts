@@ -410,7 +410,15 @@ export class MqttIntegration extends BaseIntegration {
           const tempHighC = validateTemperature(parseFloat(valueStr), sharedObj.value);
           await this.updateSharedValue(serial, sharedObj, 'target_temperature_high', tempHighC);
           break;
-
+          
+        case 'target_humidity':
+          const humidity = parseFloat(valueStr);
+          if (!isNaN(humidity)) {
+            await this.updateSharedValue(serial, sharedObj, 'target_humidity', humidity);
+            await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', true);
+            console.log(`[MQTT:${this.userId}] Set humidity for ${serial} to ${humidity}%`);
+          }
+          break;
         case 'fan_mode':
           if (valueStr === 'on') {
             // Turn fan on: activate control state and set timer
