@@ -331,7 +331,7 @@ export function buildHumidifierDiscovery(
     
     // 3. Current Reading
     current_humidity_topic: `${topicPrefix}/${serial}/ha/current_humidity`,
-
+    action_topic: `${topicPrefix}/${serial}/ha/humidifier_action`,
     device_class: 'humidifier',
     origin: {
         name: 'NoLongerEvil',
