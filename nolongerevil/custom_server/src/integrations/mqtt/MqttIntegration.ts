@@ -45,7 +45,7 @@ export class MqttIntegration extends BaseIntegration {
   private isReady: boolean = false;
   private deviceWatchInterval: NodeJS.Timeout | null = null;
 
-  constructor(
+constructor(
     userId: string,
     config: MqttConfig,
     deviceState: DeviceStateService,
@@ -57,11 +57,20 @@ export class MqttIntegration extends BaseIntegration {
       topicPrefix: 'nolongerevil',
       discoveryPrefix: 'homeassistant',
       clientId: `nolongerevil-${userId}`,
-      publishRaw: true, // Default: publish raw Nest objects
-      homeAssistantDiscovery: true, // Default: don't publish HA formatted (user must enable)
-      ...config, // User config overrides defaults
+      publishRaw: true, 
+      homeAssistantDiscovery: true, // Set to true to ensure discovery runs
+      ...config,
     };
 
+    // Force values to match your logs
+    this.config.topicPrefix = 'nolongerevil';
+    this.config.homeAssistantDiscovery = true;
+
+    this.deviceState = deviceState;
+    this.deviceStateManager = deviceStateManager;
+    this.subscriptionManager = subscriptionManager;
+  }
+    
 TypeScript
 
   constructor(
