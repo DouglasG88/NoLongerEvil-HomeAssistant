@@ -87,6 +87,7 @@ TypeScript
 
     // Correct way: Perform the override AFTER the object is created
     this.config.topicPrefix = 'nolongerevil';
+    this.config.homeAssistantDiscovery = true;
     this.deviceState = deviceState;
     this.deviceStateManager = deviceStateManager;
     this.subscriptionManager = subscriptionManager;
