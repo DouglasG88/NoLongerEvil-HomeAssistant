@@ -462,6 +462,7 @@ export async function removeDeviceDiscovery(
     `${discoveryPrefix}/binary_sensor/nest_${serial}/occupancy/config`,
     `${discoveryPrefix}/binary_sensor/nest_${serial}/fan/config`,
     `${discoveryPrefix}/binary_sensor/nest_${serial}/leaf/config`,
+    `${discoveryPrefix}/humidifier/nest_${serial}/humidifier/config`,
   ];
 
   // Publish empty payloads to remove entities
