@@ -415,28 +415,31 @@ export class MqttIntegration extends BaseIntegration {
           const humidity = parseFloat(valueStr);
           const step = 5;
           const roundedHumidity = Math.round(humidity / step) * step;
-
+        
           if (!isNaN(roundedHumidity) && roundedHumidity >= 10 && roundedHumidity <= 60) {
+            // 1. Update the humidity setpoint in the shared object
             await this.updateSharedValue(serial, sharedObj, 'target_humidity', roundedHumidity);
             console.log(`[MQTT:${this.userId}] Set humidity for ${serial} to ${roundedHumidity}%`);
+        
+            // 2. Auto-enable: If the user moves the slider, turn the humidifier ON if it was OFF
+            if (deviceObj.value.target_humidity_enabled === false) {
+              console.log(`[MQTT:${this.userId}] Slider moved; auto-enabling humidifier for ${serial}`);
+              await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', true);
+            }
           }
-          if (deviceObj.value.target_humidity_enabled === false) {
-            console.log(`[MQTT:${this.userId}] Humidity slider moved; auto-enabling humidifier for ${serial}`);
-            await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', true);
-          }
-        }
-        break;
+          break;
 
         case 'humidifier_enabled':
-          // HA sends "true" or "false" based on our discovery payload
           const isEnabled = valueStr === 'true';
+          // Perform the primary update
           await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', isEnabled);
+          
+          // Only trigger the -1 reset if we are turning it ON
           if (isEnabled && sharedObj.value.target_humidity === -1) {
-          // If enabling and current target is -1, reset to a safe default (e.g. 45%)
             console.log(`[MQTT:${this.userId}] Humidifier enabled but target was -1, resetting to 45%`);
             await this.updateSharedValue(serial, sharedObj, 'target_humidity', 45);
           }
-  
+        
           console.log(`[MQTT:${this.userId}] Set humidifier enabled to: ${isEnabled}`);
           break;
           
