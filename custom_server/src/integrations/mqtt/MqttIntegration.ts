@@ -685,6 +685,12 @@ export class MqttIntegration extends BaseIntegration {
       if (shared.target_temperature_high !== null && shared.target_temperature_high !== undefined) {
         await this.publish(`${prefix}/${serial}/ha/target_temperature_high`, String(shared.target_temperature_high), { retain: true, qos: 0 });
       }
+      if (shared.target_humidity !== null && shared.target_humidity !== undefined) {
+        await this.publish(`${prefix}/${serial}/ha/target_humidity`, String(shared.target_humidity), { retain: true, qos: 0 });
+      }
+
+      const humEnabled = device.target_humidity_enabled === true; 
+      await this.publish(`${prefix}/${serial}/ha/humidifier_enabled`, String(humEnabled), { retain: true, qos: 0 });
 
       const haMode = nestModeToHA(shared.target_temperature_type);
       await this.publish(`${prefix}/${serial}/ha/mode`, haMode, { retain: true, qos: 0 });
