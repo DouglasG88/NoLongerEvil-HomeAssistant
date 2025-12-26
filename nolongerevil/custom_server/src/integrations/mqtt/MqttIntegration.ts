@@ -59,7 +59,7 @@ constructor(
       clientId: `nolongerevil-${userId}`,
       publishRaw: true, 
       homeAssistantDiscovery: true, 
-      ...config, // User config merges here
+      ...config,
     };
 
     // Force values to match your specific hardware logs
@@ -70,9 +70,7 @@ constructor(
     this.deviceStateManager = deviceStateManager;
     this.subscriptionManager = subscriptionManager;
   }
-  /**
-   * Initialize MQTT connection
-   */
+  
   async initialize(): Promise<void> {
     console.log(`[MQTT:${this.userId}] Initializing MQTT integration...`);
 
