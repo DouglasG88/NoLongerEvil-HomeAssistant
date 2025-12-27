@@ -290,29 +290,26 @@ export class MqttIntegration extends BaseIntegration {
           }
           break;
 
-        // --- ORDERED HUMIDITY LOGIC WITH DIRECT PUBLISH ---
+        // --- ATOMIC HUMIDITY UPDATES ---
+        // This solves the issue where the thermostat sees "Enable" then "Target" separately.
+        // We now bundle them into ONE update to the 'shared' object.
         case 'target_humidity':
           let humVal = parseFloat(valueStr);
           if (!isNaN(humVal) && humVal >= 10 && humVal <= 60) {
             humVal = Math.round(humVal / 5) * 5;
-            
-            console.log(`[MQTT:${this.userId}] Set Humidity Sequence: Enable -> Wait 500ms -> Set ${humVal}%`);
+            console.log(`[MQTT:${this.userId}] Atomic Update: Set Humidity ${humVal}% + Enable`);
 
-            // 1. FORCE ENABLE (Direct Publish + DB Update)
-            // We publish directly to bypass any async delays in state change listeners
-            const enableTopic = `${prefix}/${serial}/shared/target_humidity_enabled`;
-            await this.publish(enableTopic, 'true', { retain: true, qos: 0 });
-            
-            // Also update DB
-            sharedObj = await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', true);
-            deviceObj = await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', true);
+            // Update SHARED with BOTH fields at once
+            await this.updateSharedFields(serial, sharedObj, {
+                target_humidity: humVal,
+                target_humidity_enabled: true
+            });
 
-            // 2. WAIT
-            await new Promise(r => setTimeout(r, 500));
-
-            // 3. SET VALUE
-            await this.updateSharedValue(serial, sharedObj, 'target_humidity', humVal);
-            await this.updateDeviceValue(serial, deviceObj, 'target_humidity', humVal);
+            // Update DEVICE for immediate feedback
+            await this.updateDeviceFields(serial, deviceObj, {
+                target_humidity: humVal,
+                target_humidity_enabled: true
+            });
           }
           break;
 
@@ -321,14 +318,23 @@ export class MqttIntegration extends BaseIntegration {
           const isEnabled = valueStr === 'true';
           console.log(`[MQTT:${this.userId}] Setting Humidifier Enabled: ${isEnabled}`);
           
-          await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', isEnabled);
-          await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', isEnabled);
-
           if (isEnabled) {
-            const currentTgt = sharedObj.value.target_humidity;
-            if (currentTgt === undefined || currentTgt < 0) {
-                await this.updateSharedValue(serial, sharedObj, 'target_humidity', 40);
-            }
+             // If turning ON, ensure we have a valid target (default 40 if missing/invalid)
+             const currentTgt = sharedObj.value.target_humidity;
+             const safeTgt = (currentTgt === undefined || currentTgt < 0) ? 40 : currentTgt;
+             
+             await this.updateSharedFields(serial, sharedObj, {
+                 target_humidity_enabled: true,
+                 target_humidity: safeTgt
+             });
+             await this.updateDeviceFields(serial, deviceObj, {
+                 target_humidity_enabled: true,
+                 target_humidity: safeTgt
+             });
+          } else {
+             // Just turning off
+             await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', false);
+             await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', false);
           }
           break;
 
@@ -342,9 +348,20 @@ export class MqttIntegration extends BaseIntegration {
     }
   }
 
+  // --- HELPER METHODS ---
+
   private async updateSharedValue(serial: string, currentObj: any, field: string, value: any): Promise<any> {
     const objectKey = `shared.${serial}`;
     const newValue = { ...currentObj.value, [field]: value };
+    const updatedObj = await this.deviceState.upsert(serial, objectKey, currentObj.object_revision + 1, Date.now(), newValue);
+    this.subscriptionManager.notify(serial, objectKey, updatedObj);
+    return updatedObj;
+  }
+
+  // NEW: Allows updating multiple fields in 'shared' atomically
+  private async updateSharedFields(serial: string, currentObj: any, fields: Record<string, any>): Promise<any> {
+    const objectKey = `shared.${serial}`;
+    const newValue = { ...currentObj.value, ...fields };
     const updatedObj = await this.deviceState.upsert(serial, objectKey, currentObj.object_revision + 1, Date.now(), newValue);
     this.subscriptionManager.notify(serial, objectKey, updatedObj);
     return updatedObj;
