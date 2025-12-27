@@ -54,15 +54,15 @@ export class MqttIntegration extends BaseIntegration {
   ) {
     super(userId, 'mqtt');
     this.config = {
-      topicPrefix: 'nolongerevil', // Default to your hardware logs
+      topicPrefix: 'nolongerevil', // Default to your hardware log requirement
       discoveryPrefix: 'homeassistant',
       clientId: `nolongerevil-${userId}`,
       publishRaw: true, 
-      homeAssistantDiscovery: true, // Default to true so it works out of the box
+      homeAssistantDiscovery: true, // Enabled by default for your setup
       ...config,
     };
-
-    // Strict overrides to ensure compatibility
+    
+    // Ensure strict compliance with your setup
     this.config.topicPrefix = 'nolongerevil';
     this.config.homeAssistantDiscovery = true;
 
@@ -79,27 +79,30 @@ export class MqttIntegration extends BaseIntegration {
 
     try {
       await this.loadUserDevices();
+
       await this.connectToBroker();
 
       // --- CRITICAL WAIT LOOP ---
-      // Ensures the connection is stable before sending data
+      // Fixes the "client not ready" race condition
       if (this.client) {
         let attempts = 0;
-        const maxAttempts = 50; // 5s max wait
+        const maxAttempts = 50; // 5 seconds max
         while (!this.client.connected && attempts < maxAttempts) {
           await new Promise((resolve) => setTimeout(resolve, 100));
           attempts++;
         }
         
         if (!this.client.connected) {
-          console.warn(`[MQTT:${this.userId}] Warning: Proceeding without confirmed connection.`);
+           console.warn(`[MQTT:${this.userId}] Warning: Proceeding without confirmed connection.`);
         } else {
-          console.log(`[MQTT:${this.userId}] Connection confirmed after ${attempts * 100}ms`);
+           console.log(`[MQTT:${this.userId}] Connection confirmed after ${attempts * 100}ms`);
         }
       }
 
       await this.subscribeToCommands();
+
       await this.publishDiscoveryMessages();
+
       await this.publishInitialState();
 
       this.startDeviceWatching();
@@ -159,6 +162,7 @@ export class MqttIntegration extends BaseIntegration {
           console.log(`[MQTT:${this.userId}] New device ${serial} detected, publishing discovery...`);
           this.userDeviceSerials.add(serial);
 
+          // Publish discovery for new device
           if (this.config.homeAssistantDiscovery && this.client) {
             try {
               await publishThermostatDiscovery(
@@ -185,9 +189,13 @@ export class MqttIntegration extends BaseIntegration {
    * Handle device removal - clean up HA discovery
    */
   private async handleDeviceRemoved(serial: string): Promise<void> {
+    // Remove from local tracking
     this.userDeviceSerials.delete(serial);
+
+    // Mark device as offline
     await this.publishAvailability(serial, 'offline');
 
+    // Remove Home Assistant discovery (publishes empty payloads)
     if (this.config.homeAssistantDiscovery && this.client) {
       try {
         await removeDeviceDiscovery(this.client, serial, this.config.discoveryPrefix!);
@@ -204,6 +212,7 @@ export class MqttIntegration extends BaseIntegration {
   private async loadUserDevices(): Promise<void> {
     try {
       const ownedDevices = await this.deviceStateManager.listUserDevices(this.userId);
+
       const sharedDevices = await this.deviceStateManager.getSharedWithMe(this.userId);
 
       this.userDeviceSerials.clear();
@@ -232,8 +241,13 @@ export class MqttIntegration extends BaseIntegration {
         connectTimeout: 10000,
       };
 
-      if (this.config.username) options.username = this.config.username;
-      if (this.config.password) options.password = this.config.password;
+      if (this.config.username) {
+        options.username = this.config.username;
+      }
+
+      if (this.config.password) {
+        options.password = this.config.password;
+      }
 
       options.will = {
         topic: `${this.config.topicPrefix}/status`,
@@ -258,6 +272,14 @@ export class MqttIntegration extends BaseIntegration {
 
       this.client.on('message', async (topic, message) => {
         await this.handleCommand(topic, message);
+      });
+
+      this.client.on('reconnect', () => {
+        console.log(`[MQTT:${this.userId}] Reconnecting to broker...`);
+      });
+
+      this.client.on('offline', () => {
+        console.log(`[MQTT:${this.userId}] Client offline`);
       });
     });
   }
@@ -326,7 +348,9 @@ export class MqttIntegration extends BaseIntegration {
         value = JSON.parse(valueStr);
       } catch {
         const num = parseFloat(valueStr);
-        if (!isNaN(num)) value = num;
+        if (!isNaN(num)) {
+          value = num;
+        }
       }
 
       console.log(`[MQTT:${this.userId}] Command: ${serial}/${objectType}.${field} = ${value}`);
@@ -339,11 +363,16 @@ export class MqttIntegration extends BaseIntegration {
         return;
       }
 
-      const newValue = { ...currentObj.value, [field]: value };
+      const newValue = {
+        ...currentObj.value,
+        [field]: value,
+      };
+
       const newRevision = currentObj.object_revision + 1;
       const newTimestamp = Date.now();
 
       await this.deviceState.upsert(serial, objectKey, newRevision, newTimestamp, newValue);
+
       console.log(`[MQTT:${this.userId}] Command executed successfully`);
     } catch (error) {
       console.error(`[MQTT:${this.userId}] Failed to handle command:`, error);
@@ -359,82 +388,97 @@ export class MqttIntegration extends BaseIntegration {
       const valueStr = message.toString().trim();
 
       const match = topic.match(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/([^/]+)/ha/(.+)/set$`));
-      if (!match) return;
+      if (!match) {
+        console.warn(`[MQTT:${this.userId}] Invalid HA command topic: ${topic}`);
+        return;
+      }
 
       const [, serial, command] = match;
 
-      if (!this.userDeviceSerials.has(serial)) return;
+      if (!this.userDeviceSerials.has(serial)) {
+        console.warn(`[MQTT:${this.userId}] Unauthorized HA command for device ${serial}`);
+        return;
+      }
 
       console.log(`[MQTT:${this.userId}] HA Command: ${serial}/${command} = ${valueStr}`);
 
       const deviceObj = await this.deviceState.get(serial, `device.${serial}`);
       const sharedObj = await this.deviceState.get(serial, `shared.${serial}`);
 
-      if (!deviceObj || !sharedObj) return;
+      if (!deviceObj || !sharedObj) {
+        console.warn(`[MQTT:${this.userId}] Device ${serial} not fully initialized`);
+        return;
+      }
 
+      // HA sends temperatures in Celsius (as declared in discovery config)
+      // No conversion needed - just validate and pass through
       switch (command) {
         case 'mode':
-          await this.updateSharedValue(serial, sharedObj, 'target_temperature_type', haModeToNest(valueStr));
+          const nestMode = haModeToNest(valueStr);
+          await this.updateSharedValue(serial, sharedObj, 'target_temperature_type', nestMode);
           break;
 
         case 'target_temperature':
-          await this.updateSharedValue(
-            serial, 
-            sharedObj, 
-            'target_temperature', 
-            validateTemperature(parseFloat(valueStr), sharedObj.value)
-          );
+          const tempC = validateTemperature(parseFloat(valueStr), sharedObj.value);
+          await this.updateSharedValue(serial, sharedObj, 'target_temperature', tempC);
           break;
 
         case 'target_temperature_low':
-          await this.updateSharedValue(
-            serial, 
-            sharedObj, 
-            'target_temperature_low', 
-            validateTemperature(parseFloat(valueStr), sharedObj.value)
-          );
+          const tempLowC = validateTemperature(parseFloat(valueStr), sharedObj.value);
+          await this.updateSharedValue(serial, sharedObj, 'target_temperature_low', tempLowC);
           break;
 
         case 'target_temperature_high':
-          await this.updateSharedValue(
-            serial, 
-            sharedObj, 
-            'target_temperature_high', 
-            validateTemperature(parseFloat(valueStr), sharedObj.value)
-          );
+          const tempHighC = validateTemperature(parseFloat(valueStr), sharedObj.value);
+          await this.updateSharedValue(serial, sharedObj, 'target_temperature_high', tempHighC);
           break;
 
         case 'fan_mode':
-          const isFanOn = valueStr === 'on';
-          await this.updateDeviceFields(serial, deviceObj, {
-            fan_control_state: isFanOn,
-            fan_timer_active: isFanOn,
-            fan_timer_timeout: isFanOn ? Math.floor(Date.now() / 1000) + 3600 : 0,
-          });
+          if (valueStr === 'on') {
+            // Turn fan on: activate control state and set timer
+            // Set timeout to 60 minutes from now (3600 seconds)
+            const timeoutTimestamp = Math.floor(Date.now() / 1000) + 3600;
+            await this.updateDeviceFields(serial, deviceObj, {
+              fan_control_state: true,
+              fan_timer_active: true,
+              fan_timer_timeout: timeoutTimestamp,
+            });
+          } else {
+            // Turn fan off: deactivate control state and clear timer
+            await this.updateDeviceFields(serial, deviceObj, {
+              fan_control_state: false,
+              fan_timer_active: false,
+              fan_timer_timeout: 0,
+            });
+          }
           break;
 
         case 'preset':
           if (valueStr === 'away') {
-            await this.updateDeviceFields(serial, deviceObj, { auto_away: 2, away: true });
+            await this.updateDeviceValue(serial, deviceObj, 'auto_away', 2);
+            await this.updateDeviceValue(serial, deviceObj, 'away', true);
           } else if (valueStr === 'home') {
-            await this.updateDeviceFields(serial, deviceObj, { auto_away: 0, away: false });
+            await this.updateDeviceValue(serial, deviceObj, 'auto_away', 0);
+            await this.updateDeviceValue(serial, deviceObj, 'away', false);
           } else if (valueStr === 'eco') {
             await this.updateDeviceValue(serial, deviceObj, 'eco', { mode: 'manual-eco', leaf: true });
           }
           break;
-
+          
         // HUMIDIFIER COMMANDS
         case 'target_humidity':
-          const humVal = parseFloat(valueStr);
-          if (!isNaN(humVal) && humVal >= 10 && humVal <= 60) {
-            await this.updateSharedValue(serial, sharedObj, 'target_humidity', humVal);
-            // If user moves slider, auto-enable
+          const humidity = parseFloat(valueStr);
+          if (!isNaN(humidity) && humidity >= 10 && humidity <= 60) {
+            // Update shared state (best effort until write topic is known)
+            await this.updateSharedValue(serial, sharedObj, 'target_humidity', humidity);
+            
+            // Auto-enable if disabled
             if (deviceObj.value.target_humidity_enabled === false) {
               await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', true);
             }
           }
           break;
-
+          
         case 'humidifier_enabled':
           const isEnabled = valueStr === 'true';
           await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', isEnabled);
@@ -444,6 +488,9 @@ export class MqttIntegration extends BaseIntegration {
           console.warn(`[MQTT:${this.userId}] Unknown HA command: ${command}`);
       }
 
+      console.log(`[MQTT:${this.userId}] HA command executed successfully`);
+
+      // Republish state to reflect the changes in Home Assistant
       await this.publishHomeAssistantState(serial);
     } catch (error) {
       console.error(`[MQTT:${this.userId}] Failed to handle HA command:`, error);
@@ -452,38 +499,60 @@ export class MqttIntegration extends BaseIntegration {
 
   private async updateSharedValue(serial: string, currentObj: any, field: string, value: any): Promise<void> {
     const objectKey = `shared.${serial}`;
-    const newValue = { ...currentObj.value, [field]: value };
+    const newValue = {
+      ...currentObj.value,
+      [field]: value,
+    };
     const newRevision = currentObj.object_revision + 1;
     const newTimestamp = Date.now();
+
     const updatedObj = await this.deviceState.upsert(serial, objectKey, newRevision, newTimestamp, newValue);
-    this.subscriptionManager.notify(serial, objectKey, updatedObj);
+    const notifyResult = this.subscriptionManager.notify(serial, objectKey, updatedObj);
+    console.log(`[MQTT:${this.userId}] Notified ${notifyResult.notified} subscriber(s) for ${serial}/${objectKey}`);
   }
 
   private async updateDeviceValue(serial: string, currentObj: any, field: string, value: any): Promise<void> {
     const objectKey = `device.${serial}`;
-    const newValue = { ...currentObj.value, [field]: value };
+    const newValue = {
+      ...currentObj.value,
+      [field]: value,
+    };
     const newRevision = currentObj.object_revision + 1;
     const newTimestamp = Date.now();
+
     const updatedObj = await this.deviceState.upsert(serial, objectKey, newRevision, newTimestamp, newValue);
-    this.subscriptionManager.notify(serial, objectKey, updatedObj);
+    const notifyResult = this.subscriptionManager.notify(serial, objectKey, updatedObj);
+    console.log(`[MQTT:${this.userId}] Notified ${notifyResult.notified} subscriber(s) for ${serial}/${objectKey}`);
   }
 
+  /**
+   * Update multiple fields in device.{serial} atomically
+   */
   private async updateDeviceFields(serial: string, currentObj: any, fields: Record<string, any>): Promise<void> {
     const objectKey = `device.${serial}`;
-    const newValue = { ...currentObj.value, ...fields };
+    const newValue = {
+      ...currentObj.value,
+      ...fields, // Merge all fields at once
+    };
     const newRevision = currentObj.object_revision + 1;
     const newTimestamp = Date.now();
+
     const updatedObj = await this.deviceState.upsert(serial, objectKey, newRevision, newTimestamp, newValue);
-    this.subscriptionManager.notify(serial, objectKey, updatedObj);
+    const notifyResult = this.subscriptionManager.notify(serial, objectKey, updatedObj);
+    console.log(`[MQTT:${this.userId}] Notified ${notifyResult.notified} subscriber(s) for ${serial}/${objectKey} (${Object.keys(fields).length} fields updated)`);
   }
 
   /**
    * Publish Home Assistant discovery messages
    */
   private async publishDiscoveryMessages(): Promise<void> {
-    if (!this.client || !this.config.homeAssistantDiscovery) return;
+    if (!this.client || !this.config.homeAssistantDiscovery) {
+      console.log(`[MQTT:${this.userId}] Skipping discovery - HA discovery disabled`);
+      return;
+    }
 
-    console.log(`[MQTT:${this.userId}] Publishing HA discovery messages...`);
+    console.log(`[MQTT:${this.userId}] Publishing HA discovery messages for ${this.userDeviceSerials.size} device(s)...`);
+
     for (const serial of this.userDeviceSerials) {
       try {
         await publishThermostatDiscovery(
@@ -497,36 +566,58 @@ export class MqttIntegration extends BaseIntegration {
         console.error(`[MQTT:${this.userId}] Failed to publish discovery for ${serial}:`, error);
       }
     }
+
+    console.log(`[MQTT:${this.userId}] HA discovery messages published`);
   }
 
   /**
    * Publish initial state for all user devices
    */
   private async publishInitialState(): Promise<void> {
-    if (!this.client) return;
+    if (!this.client) {
+      console.log(`[MQTT:${this.userId}] Cannot publish initial state - no MQTT client`);
+      return;
+    }
 
-    console.log(`[MQTT:${this.userId}] Publishing initial state...`);
+    console.log(`[MQTT:${this.userId}] Publishing initial state for ${this.userDeviceSerials.size} device(s)...`);
+
     for (const serial of this.userDeviceSerials) {
       try {
+        console.log(`[MQTT:${this.userId}] Getting state for device ${serial}...`);
+
+        // Get all objects for this device
         const deviceObjects = await this.deviceState.getAllForDevice(serial);
         const objectKeys = Object.keys(deviceObjects);
 
-        if (objectKeys.length === 0) continue;
+        console.log(`[MQTT:${this.userId}] Device ${serial} has ${objectKeys.length} objects:`, objectKeys);
 
-        for (const objectKey of objectKeys) {
-          const obj = deviceObjects[objectKey];
-          await this.publishObjectState(serial, objectKey, obj.value, true); 
+        if (objectKeys.length === 0) {
+          console.warn(`[MQTT:${this.userId}] Device ${serial} has no state yet, skipping initial publish`);
+          continue;
         }
 
+        // Publish each object (raw MQTT only, skip HA state for now)
+        for (const objectKey of objectKeys) {
+          const obj = deviceObjects[objectKey];
+          console.log(`[MQTT:${this.userId}] Publishing ${objectKey}...`);
+          await this.publishObjectState(serial, objectKey, obj.value, true); // Pass skipHA flag
+        }
+
+        // Now publish Home Assistant state once (after all objects loaded)
         if (this.config.homeAssistantDiscovery) {
+          console.log(`[MQTT:${this.userId}] Publishing Home Assistant state for ${serial}...`);
           await this.publishHomeAssistantState(serial);
         }
 
+        // Mark device as online
         await this.publishAvailability(serial, 'online');
+        console.log(`[MQTT:${this.userId}] Published initial state for ${serial}`);
       } catch (error) {
         console.error(`[MQTT:${this.userId}] Failed to publish initial state for ${serial}:`, error);
       }
     }
+
+    console.log(`[MQTT:${this.userId}] Initial state publishing complete`);
   }
 
   /**
@@ -538,12 +629,14 @@ export class MqttIntegration extends BaseIntegration {
     const parsed = parseObjectKey(objectKey);
     if (!parsed) return;
 
+    const { objectType } = parsed;
+
     if (this.config.publishRaw !== false) {
-      const fullTopic = buildStateTopic(this.config.topicPrefix!, serial, parsed.objectType);
+      const fullTopic = buildStateTopic(this.config.topicPrefix!, serial, objectType);
       await this.publish(fullTopic, JSON.stringify(value), { retain: true, qos: 0 });
 
       for (const [field, fieldValue] of Object.entries(value)) {
-        const fieldTopic = buildStateTopic(this.config.topicPrefix!, serial, parsed.objectType, field);
+        const fieldTopic = buildStateTopic(this.config.topicPrefix!, serial, objectType, field);
         const payload = typeof fieldValue === 'object' ? JSON.stringify(fieldValue) : String(fieldValue);
         await this.publish(fieldTopic, payload, { retain: true, qos: 0 });
       }
@@ -556,41 +649,57 @@ export class MqttIntegration extends BaseIntegration {
 
   /**
    * Publish Home Assistant formatted state for a device
+   * All temperatures are published in Celsius (Nest's internal format)
+   * HA handles display conversion based on user preferences
    */
   private async publishHomeAssistantState(serial: string): Promise<void> {
-    if (!this.client || !this.isReady) return;
+    if (!this.client || !this.isReady) {
+      console.log(`[MQTT:${this.userId}] Cannot publish HA state for ${serial} - client not ready`);
+      return;
+    }
 
     try {
+      console.log(`[MQTT:${this.userId}] Starting HA state publish for ${serial}...`);
+
       const prefix = this.config.topicPrefix!;
+
+      // Get current device state
       const deviceObj = await this.deviceState.get(serial, `device.${serial}`);
       const sharedObj = await this.deviceState.get(serial, `shared.${serial}`);
 
-      if (!deviceObj || !sharedObj) return;
+      if (!deviceObj || !sharedObj) {
+        console.warn(`[MQTT:${this.userId}] Cannot publish HA state for ${serial} - missing objects`);
+        return;
+      }
 
       const device = deviceObj.value || {};
       const shared = sharedObj.value || {};
 
-      // 1. Temperatures & Humidity
+      // Publish temperatures in Celsius
       const currentTemp = shared.current_temperature ?? device.current_temperature;
-      if (currentTemp !== undefined) {
+      if (currentTemp !== null && currentTemp !== undefined) {
         await this.publish(`${prefix}/${serial}/ha/current_temperature`, String(currentTemp), { retain: true, qos: 0 });
       }
+
       if (device.current_humidity !== undefined) {
         await this.publish(`${prefix}/${serial}/ha/current_humidity`, String(device.current_humidity), { retain: true, qos: 0 });
       }
 
-      // 2. Humidifier State
+      // --- HUMIDIFIER LOGIC START ---
+      // 1. Target Humidity (Prioritize Device)
       const targetHum = device.target_humidity ?? shared.target_humidity;
-      if (targetHum !== undefined) {
+      if (targetHum !== undefined && targetHum >= 0) {
         await this.publish(`${prefix}/${serial}/ha/target_humidity`, String(targetHum), { retain: true, qos: 0 });
       }
-      
+
+      // 2. Enabled State
       const isEnabled = device.target_humidity_enabled === true;
       await this.publish(`${prefix}/${serial}/ha/humidifier_enabled`, String(isEnabled), { retain: true, qos: 0 });
 
-      // Determine Action: Check the VALVE state ("device/humidifier_state")
-      const valveState = String(device.humidifier_state).toLowerCase(); // payload is "true"/"false"
-      const isValveOpen = valveState === 'true';
+      // 3. Action / Valve State
+      // Convert true/false boolean or string to 'true' string check
+      const valveState = String(device.humidifier_state).toLowerCase();
+      const isValveOpen = valveState === 'true'; 
       
       let humAction = 'idle';
       if (!isEnabled) {
@@ -599,40 +708,63 @@ export class MqttIntegration extends BaseIntegration {
         humAction = 'humidifying';
       }
       await this.publish(`${prefix}/${serial}/ha/humidifier_action`, humAction, { retain: true, qos: 0 });
+      // --- HUMIDIFIER LOGIC END ---
 
-      // 3. Thermostat Modes
-      await this.publish(`${prefix}/${serial}/ha/mode`, nestModeToHA(shared.target_temperature_type), { retain: true, qos: 0 });
-      await this.publish(
-        `${prefix}/${serial}/ha/action`, 
-        await deriveHvacAction(serial, this.deviceState), 
-        { retain: true, qos: 0 }
-      );
-      
-      if (shared.target_temperature !== undefined) {
+      if (shared.target_temperature !== null && shared.target_temperature !== undefined) {
         await this.publish(`${prefix}/${serial}/ha/target_temperature`, String(shared.target_temperature), { retain: true, qos: 0 });
       }
-      if (shared.target_temperature_low !== undefined) {
+
+      if (shared.target_temperature_low !== null && shared.target_temperature_low !== undefined) {
         await this.publish(`${prefix}/${serial}/ha/target_temperature_low`, String(shared.target_temperature_low), { retain: true, qos: 0 });
       }
-      if (shared.target_temperature_high !== undefined) {
+
+      if (shared.target_temperature_high !== null && shared.target_temperature_high !== undefined) {
         await this.publish(`${prefix}/${serial}/ha/target_temperature_high`, String(shared.target_temperature_high), { retain: true, qos: 0 });
       }
 
-      // 4. Other
+      const haMode = nestModeToHA(shared.target_temperature_type);
+      await this.publish(`${prefix}/${serial}/ha/mode`, haMode, { retain: true, qos: 0 });
+
+      const action = await deriveHvacAction(serial, this.deviceState);
+      await this.publish(`${prefix}/${serial}/ha/action`, action, { retain: true, qos: 0 });
+
       const fanMode = await deriveFanMode(serial, this.deviceState);
       await this.publish(`${prefix}/${serial}/ha/fan_mode`, fanMode, { retain: true, qos: 0 });
+
       const preset = await nestPresetToHA(serial, this.deviceState);
-      if (preset) await this.publish(`${prefix}/${serial}/ha/preset`, preset, { retain: true, qos: 0 });
-      
+      if (preset) {
+        await this.publish(`${prefix}/${serial}/ha/preset`, preset, { retain: true, qos: 0 });
+      }
+
+      // Outdoor temperature
+      let outdoorTempCelsius = device.outdoor_temperature ?? shared.outside_temperature ?? device.outside_temperature;
+      if (outdoorTempCelsius === undefined || outdoorTempCelsius === null) {
+        try {
+          const userWeather = await this.deviceStateManager.getUserWeather(this.userId);
+          if (userWeather?.current?.temp_c !== undefined) {
+            outdoorTempCelsius = userWeather.current.temp_c;
+          }
+        } catch (error) {
+          console.error(`[MQTT:${this.userId}] Failed to get user weather for outdoor temp:`, error);
+        }
+      }
+      if (outdoorTempCelsius !== null && outdoorTempCelsius !== undefined) {
+        await this.publish(`${prefix}/${serial}/ha/outdoor_temperature`, String(outdoorTempCelsius), { retain: true, qos: 0 });
+      }
+
       const isAway = await isDeviceAway(serial, this.deviceState);
       await this.publish(`${prefix}/${serial}/ha/occupancy`, isAway ? 'away' : 'home', { retain: true, qos: 0 });
+
       const fanRunning = await isFanRunning(serial, this.deviceState);
       await this.publish(`${prefix}/${serial}/ha/fan_running`, String(fanRunning), { retain: true, qos: 0 });
+
       const eco = await isEcoActive(serial, this.deviceState);
       await this.publish(`${prefix}/${serial}/ha/eco`, String(eco), { retain: true, qos: 0 });
 
+      console.log(`[MQTT:${this.userId}] Successfully published HA state for ${serial}`);
     } catch (error) {
-      console.error(`[MQTT:${this.userId}] Error publishing HA state:`, error);
+      console.error(`[MQTT:${this.userId}] Error publishing HA state for ${serial}:`, error);
+      throw error; 
     }
   }
 
@@ -641,47 +773,91 @@ export class MqttIntegration extends BaseIntegration {
    */
   private async publishAvailability(serial: string, status: 'online' | 'offline'): Promise<void> {
     if (!this.client) return;
+
     const topic = buildAvailabilityTopic(this.config.topicPrefix!, serial);
     await this.publish(topic, status, { retain: true, qos: 1 });
   }
 
   /**
-   * Publish message to MQTT
+   * Publish message to MQTT (with error handling)
    */
   private async publish(topic: string, message: string, options: mqtt.IClientPublishOptions): Promise<void> {
     if (!this.client) return;
+
     return new Promise((resolve, reject) => {
       this.client!.publish(topic, message, options, (err) => {
-        if (err) reject(err); else resolve();
+        if (err) {
+          console.error(`[MQTT:${this.userId}] Failed to publish to ${topic}:`, err);
+          reject(err);
+        } else {
+          resolve();
+        }
       });
     });
   }
 
+  /**
+   * Called when device state changes (from BaseIntegration)
+   */
   async onDeviceStateChange(change: DeviceStateChange): Promise<void> {
-    if (!this.userDeviceSerials.has(change.serial)) return;
+    if (!this.userDeviceSerials.has(change.serial)) {
+      console.log(`[MQTT:${this.userId}] Ignoring state change for ${change.serial} (not authorized)`);
+      return;
+    }
+
+    console.log(`[MQTT:${this.userId}] Publishing state change: ${change.serial}/${change.objectKey}`);
+
     await this.publishObjectState(change.serial, change.objectKey, change.value);
   }
 
+  /**
+   * Called when device connects (from BaseIntegration)
+   */
   async onDeviceConnected(serial: string): Promise<void> {
-    if (this.userDeviceSerials.has(serial)) await this.publishAvailability(serial, 'online');
+    if (!this.userDeviceSerials.has(serial)) {
+      return;
+    }
+
+    await this.publishAvailability(serial, 'online');
   }
 
+  /**
+   * Called when device disconnects (from BaseIntegration)
+   */
   async onDeviceDisconnected(serial: string): Promise<void> {
-    if (this.userDeviceSerials.has(serial)) await this.publishAvailability(serial, 'offline');
+    if (!this.userDeviceSerials.has(serial)) {
+      return;
+    }
+
+    await this.publishAvailability(serial, 'offline');
   }
 
+  /**
+   * Shutdown MQTT connection
+   */
   async shutdown(): Promise<void> {
+    console.log(`[MQTT:${this.userId}] Shutting down...`);
+
     if (this.deviceWatchInterval) {
       clearInterval(this.deviceWatchInterval);
       this.deviceWatchInterval = null;
     }
+
     if (this.client) {
-      for (const serial of this.userDeviceSerials) await this.publishAvailability(serial, 'offline');
+      for (const serial of this.userDeviceSerials) {
+        await this.publishAvailability(serial, 'offline');
+      }
+
       await new Promise<void>((resolve) => {
-        this.client!.end(false, {}, () => resolve());
+        this.client!.end(false, {}, () => {
+          console.log(`[MQTT:${this.userId}] Disconnected from broker`);
+          resolve();
+        });
       });
+
       this.client = null;
     }
+
     this.isReady = false;
   }
 }
