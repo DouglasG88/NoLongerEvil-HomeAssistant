@@ -1,4 +1,8 @@
 # NoLongerEvil Home Assistant Add-on
+[![Build Status](https://github.com/codykociemba/NoLongerEvil-HomeAssistant/actions/workflows/build.yaml/badge.svg)](https://github.com/codykociemba/NoLongerEvil-HomeAssistant/actions/workflows/build.yaml)
+[![License](https://img.shields.io/github/license/codykociemba/NoLongerEvil-HomeAssistant)](LICENSE)
+[![GitHub Release](https://img.shields.io/github/v/release/codykociemba/NoLongerEvil-HomeAssistant)](https://github.com/codykociemba/NoLongerEvil-HomeAssistant/releases)
+[![Home Assistant Add-on](https://img.shields.io/badge/Home%20Assistant-Add--on-blue.svg)](https://www.home-assistant.io/addons/)
 
 Now with functioning humidifier.
 Running a custom server and not pulling from https://github.com/codykociemba/NoLongerEvil-Thermostat
@@ -14,10 +18,6 @@ NoLongerEvil-HomeAssistant/nolongerevil/dockerfile (basically pointing to the ne
 
 
 
-[![Build Status](https://github.com/codykociemba/NoLongerEvil-HomeAssistant/actions/workflows/build.yaml/badge.svg)](https://github.com/codykociemba/NoLongerEvil-HomeAssistant/actions/workflows/build.yaml)
-[![License](https://img.shields.io/github/license/codykociemba/NoLongerEvil-HomeAssistant)](LICENSE)
-[![GitHub Release](https://img.shields.io/github/v/release/codykociemba/NoLongerEvil-HomeAssistant)](https://github.com/codykociemba/NoLongerEvil-HomeAssistant/releases)
-[![Home Assistant Add-on](https://img.shields.io/badge/Home%20Assistant-Add--on-blue.svg)](https://www.home-assistant.io/addons/)
 
 A Home Assistant add-on that provides self-hosted Nest thermostat control via the NoLongerEvil API. Control your Nest thermostats locally without relying on external cloud services.
 
