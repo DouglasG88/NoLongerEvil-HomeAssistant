@@ -476,23 +476,27 @@ export class MqttIntegration extends BaseIntegration {
       if (device.current_humidity !== undefined) await this.publish(`${prefix}/${serial}/ha/current_humidity`, String(device.current_humidity), { retain: true, qos: 0 });
 
       // 1. Target Humidity (The Slider)
-      // Requirement: Check range 10-60 (ignore -1) and publish to 'device/target_humidity'
       const targetHum = device.target_humidity ?? shared.target_humidity;
       if (targetHum !== undefined && targetHum >= 10 && targetHum <= 60) {
         await this.publish(`${prefix}/${serial}/device/target_humidity`, String(targetHum), { retain: true, qos: 0 });
       }
 
       // 2. Humidifier Enabled (The Switch)
-      // Requirement: Publish to 'ha/humidifier_enabled'
-      const isEnabled = shared.target_humidity_enabled === true || device.target_humidity_enabled === true;
+      // Logic: It is ON only if the flag is true AND the target is NOT -1.
+      const rawEnabled = shared.target_humidity_enabled === true || device.target_humidity_enabled === true;
+      
+      // If target is -1, treat it as OFF regardless of the enabled flag
+      const isTargetOff = targetHum === -1; 
+      const isEnabled = rawEnabled && !isTargetOff;
+      
       await this.publish(`${prefix}/${serial}/ha/humidifier_enabled`, String(isEnabled), { retain: true, qos: 0 });
 
       // 3. Action Status (Text)
-      // Requirement: "states are humidifying and idle"
       const valveState = String(device.humidifier_state).toLowerCase();
       const isValveOpen = valveState === 'true' || valveState === 'on'; 
       
       let humAction = 'idle';
+      // Since isEnabled now accounts for -1, this logic automatically handles it:
       if (isEnabled && isValveOpen) {
         humAction = 'humidifying';
       }
