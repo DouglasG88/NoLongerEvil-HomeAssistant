@@ -62,7 +62,7 @@ export class MqttIntegration extends BaseIntegration {
       ...config,
     };
     
-    // Force overrides to match your setup
+    // Force overrides
     this.config.topicPrefix = 'nolongerevil';
     this.config.homeAssistantDiscovery = true;
 
@@ -292,26 +292,28 @@ export class MqttIntegration extends BaseIntegration {
           }
           break;
 
-        // --- UPDATED HUMIDIFIER LOGIC ---
+        // --- UPDATED HUMIDIFIER LOGIC (Enable-First Order) ---
         case 'target_humidity':
           let humVal = parseFloat(valueStr);
           if (!isNaN(humVal) && humVal >= 10 && humVal <= 60) {
             // 1. ROUNDING
             humVal = Math.round(humVal / 5) * 5;
-            console.log(`[MQTT:${this.userId}] Set Humidity: ${humVal}% (Rounded)`);
             
-            // 2. WRITE TO SHARED (The setpoint)
-            await this.updateSharedValue(serial, sharedObj, 'target_humidity', humVal);
-            
-            // 3. FORCE ENABLE (Device & Shared) with every command
-            // This ensures the command isn't ignored because it was "off"
-            console.log(`[MQTT:${this.userId}] Force enabling humidifier with setpoint change`);
+            console.log(`[MQTT:${this.userId}] Set Humidity Sequence: Force Enable -> Set ${humVal}%`);
+
+            // 2. FORCE ENABLE FIRST (Shared is critical for hardware)
             await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', true);
             await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', true);
+
+            // 3. SET VALUE SECOND
+            await this.updateSharedValue(serial, sharedObj, 'target_humidity', humVal);
+            await this.updateDeviceValue(serial, deviceObj, 'target_humidity', humVal);
           }
           break;
 
-        case 'humidifier_enabled':
+        // UPDATED: Using 'target_humidity_enabled' to match discovery
+        case 'target_humidity_enabled':
+        case 'humidifier_enabled': // Keep for backward compat
           const isEnabled = valueStr === 'true';
           
           console.log(`[MQTT:${this.userId}] Setting Humidifier Enabled: ${isEnabled}`);
@@ -320,7 +322,6 @@ export class MqttIntegration extends BaseIntegration {
 
           if (isEnabled) {
             const currentTgt = sharedObj.value.target_humidity;
-            // If turning ON and value is invalid, set default to 40%
             if (currentTgt === undefined || currentTgt < 0) {
                 console.log(`[MQTT:${this.userId}] Humidifier ON -> Force 40% default`);
                 await this.updateSharedValue(serial, sharedObj, 'target_humidity', 40);
@@ -426,18 +427,18 @@ export class MqttIntegration extends BaseIntegration {
       if (currentTemp !== undefined) await this.publish(`${prefix}/${serial}/ha/current_temperature`, String(currentTemp), { retain: true, qos: 0 });
       if (device.current_humidity !== undefined) await this.publish(`${prefix}/${serial}/ha/current_humidity`, String(device.current_humidity), { retain: true, qos: 0 });
 
-      // --- PUBLISH HUMIDIFIER STATE ---
-      // 1. Target Humidity
+      // --- HUMIDIFIER STATE ---
       const targetHum = device.target_humidity ?? shared.target_humidity;
       if (targetHum !== undefined && targetHum >= 0) {
         await this.publish(`${prefix}/${serial}/ha/target_humidity`, String(targetHum), { retain: true, qos: 0 });
       }
 
-      // 2. Enabled State: From SHARED
+      // Enabled State: From SHARED
       const isEnabled = shared.target_humidity_enabled === true;
-      await this.publish(`${prefix}/${serial}/ha/humidifier_enabled`, String(isEnabled), { retain: true, qos: 0 });
+      // Publish to 'target_humidity_enabled' topic
+      await this.publish(`${prefix}/${serial}/ha/target_humidity_enabled`, String(isEnabled), { retain: true, qos: 0 });
 
-      // 3. Action / Valve State: From DEVICE
+      // Action / Valve State: From DEVICE
       const valveState = String(device.humidifier_state).toLowerCase();
       const isValveOpen = valveState === 'true'; 
       let humAction = 'idle';
