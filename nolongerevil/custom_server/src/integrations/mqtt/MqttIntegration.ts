@@ -219,25 +219,68 @@ export class MqttIntegration extends BaseIntegration {
   private async handleCommand(topic: string, message: Buffer): Promise<void> {
     try {
       const prefix = this.config.topicPrefix!;
+      
+      // 1. Redirect HA specific commands
       if (topic.includes('/ha/') && topic.endsWith('/set')) {
         await this.handleHomeAssistantCommand(topic, message);
         return;
       }
+
+      // 2. Parse Standard Device Commands
       const parsed = parseCommandTopic(topic, prefix);
       if (!parsed) return;
       const { serial, objectType, field } = parsed;
       if (!this.userDeviceSerials.has(serial)) return;
+      
       const valueStr = message.toString();
       let value: any = valueStr;
       try { value = JSON.parse(valueStr); } catch {
         const num = parseFloat(valueStr);
         if (!isNaN(num)) value = num;
       }
+
       const objectKey = `${objectType}.${serial}`;
       const currentObj = await this.deviceState.get(serial, objectKey);
       if (!currentObj) return;
+
+      // === LOGIC: Intercept Humidity Slider ===
+      // This handles commands sent to .../device/target_humidity/set
+      if (field === 'target_humidity') {
+          let humVal = parseFloat(valueStr);
+          
+          // Requirement: Ignore negative values or invalid ranges
+          if (isNaN(humVal) || humVal < 10 || humVal > 60) {
+             console.log(`[MQTT] Ignoring invalid humidity target: ${humVal}`);
+             return; // Stop. Do not update device.
+          }
+          
+          // Requirement: increments of 5
+          humVal = Math.round(humVal / 5) * 5;
+
+          // Requirement: Enable AND Set Value
+          // We update the state with BOTH fields. The DeviceStateService syncs them.
+          let deviceObj = await this.deviceState.get(serial, `device.${serial}`);
+          let sharedObj = await this.deviceState.get(serial, `shared.${serial}`);
+
+          if (deviceObj && sharedObj) {
+            console.log(`[MQTT:${this.userId}] Atomic Update (Device Topic): Set Humidity ${humVal}% + Enable`);
+            await this.updateSharedFields(serial, sharedObj, {
+                target_humidity_enabled: true,
+                target_humidity: humVal
+            });
+            await this.updateDeviceFields(serial, deviceObj, {
+                target_humidity_enabled: true,
+                target_humidity: humVal
+            });
+          }
+          return; // Handled manually
+      }
+      // =========================================
+
+      // Default Handler
       const newValue = { ...currentObj.value, [field]: value };
       await this.deviceState.upsert(serial, objectKey, currentObj.object_revision + 1, Date.now(), newValue);
+    
     } catch (error) {
       console.error(`[MQTT:${this.userId}] Failed to handle command:`, error);
     }
@@ -290,35 +333,6 @@ export class MqttIntegration extends BaseIntegration {
           }
           break;
 
-        // --- ATOMIC HUMIDITY UPDATES ---
-        // This solves the issue where the thermostat sees "Enable" then "Target" separately.
-        // We now bundle them into ONE update to the 'shared' object.
-       // ... inside handleHomeAssistantCommand switch statement ...
-
-        case 'target_humidity':
-          let humVal = parseFloat(valueStr);
-          // Only accept valid range 10-60. Ignore -1 as per requirements.
-          if (!isNaN(humVal) && humVal >= 10 && humVal <= 60) {
-            // Enforce step of 5
-            humVal = Math.round(humVal / 5) * 5;
-            
-            // User requirement: "set by setting target_humidity_enabled true AND target_humidity value"
-            console.log(`[MQTT:${this.userId}] Setting Humidity Target: ${humVal}%`);
-
-            // Update shared state
-            await this.updateSharedFields(serial, sharedObj, {
-                target_humidity: humVal,
-                target_humidity_enabled: true 
-            });
-
-            // Update device state (write to device/target_humidity/set)
-            await this.updateDeviceFields(serial, deviceObj, {
-                target_humidity: humVal,
-                target_humidity_enabled: true
-            });
-          }
-          break;
-
         case 'humidifier_enabled': 
         case 'target_humidity_enabled':
           const isEnabled = valueStr === 'true';
@@ -344,6 +358,7 @@ export class MqttIntegration extends BaseIntegration {
              });
           } else {
              // Turn OFF
+             // User requirement: "ignore negative value" -> So we DO NOT set target to -1 here.
              await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', false);
              await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', false);
           }
@@ -481,7 +496,6 @@ export class MqttIntegration extends BaseIntegration {
       if (isEnabled && isValveOpen) {
         humAction = 'humidifying';
       }
-      // If disabled or valve closed, it remains 'idle'
       
       await this.publish(`${prefix}/${serial}/ha/humidifier_action`, humAction, { retain: true, qos: 0 });
 
