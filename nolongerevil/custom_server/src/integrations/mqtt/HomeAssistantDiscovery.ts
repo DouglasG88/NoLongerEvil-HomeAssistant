@@ -83,14 +83,14 @@ export function buildHumidifierDiscovery(
     payload_off: 'false',
     
     // 2. Slider (Target) - Direct to DEVICE topic so manual commands work too
-    // Intercepted in MqttIntegration to force "Enable: True"
     target_humidity_command_topic: `${topicPrefix}/${serial}/device/target_humidity/set`,
     target_humidity_state_topic: `${topicPrefix}/${serial}/device/target_humidity`,
     min_humidity: 10,
     max_humidity: 60,
     
-    // 3. Status
+    // 3. Status & Current Humidity
     action_topic: `${topicPrefix}/${serial}/ha/humidifier_action`,
+    current_humidity_topic: `${topicPrefix}/${serial}/ha/current_humidity`, // <--- This was missing
     
     device_class: 'humidifier',
     origin: {
