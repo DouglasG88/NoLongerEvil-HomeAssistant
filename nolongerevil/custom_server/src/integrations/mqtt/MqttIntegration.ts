@@ -292,7 +292,7 @@ export class MqttIntegration extends BaseIntegration {
           }
           break;
 
-        // --- UPDATED HUMIDIFIER LOGIC (Enable-First Order) ---
+        // --- ORDERED HUMIDITY LOGIC ---
         case 'target_humidity':
           let humVal = parseFloat(valueStr);
           if (!isNaN(humVal) && humVal >= 10 && humVal <= 60) {
@@ -302,6 +302,7 @@ export class MqttIntegration extends BaseIntegration {
             console.log(`[MQTT:${this.userId}] Set Humidity Sequence: Force Enable -> Set ${humVal}%`);
 
             // 2. FORCE ENABLE FIRST (Shared is critical for hardware)
+            // We await these to ensure order
             await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', true);
             await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', true);
 
@@ -322,6 +323,7 @@ export class MqttIntegration extends BaseIntegration {
 
           if (isEnabled) {
             const currentTgt = sharedObj.value.target_humidity;
+            // If turning ON and value is invalid/off (-1), set default to 40%
             if (currentTgt === undefined || currentTgt < 0) {
                 console.log(`[MQTT:${this.userId}] Humidifier ON -> Force 40% default`);
                 await this.updateSharedValue(serial, sharedObj, 'target_humidity', 40);
@@ -435,7 +437,7 @@ export class MqttIntegration extends BaseIntegration {
 
       // Enabled State: From SHARED
       const isEnabled = shared.target_humidity_enabled === true;
-      // Publish to 'target_humidity_enabled' topic
+      // Publish to updated topic 'target_humidity_enabled'
       await this.publish(`${prefix}/${serial}/ha/target_humidity_enabled`, String(isEnabled), { retain: true, qos: 0 });
 
       // Action / Valve State: From DEVICE
