@@ -9,6 +9,9 @@ import * as mqtt from 'mqtt';
 import type { DeviceStateService } from '../../services/DeviceStateService';
 import { resolveDeviceName } from './helpers';
 
+/**
+ * Build Home Assistant discovery payload for climate entity
+ */
 export function buildClimateDiscovery(
   serial: string,
   deviceName: string,
@@ -17,9 +20,7 @@ export function buildClimateDiscovery(
   return {
     unique_id: `nolongerevil_${serial}`,
     name: deviceName,
-    // DEPRECATED: object_id: `nest_${serial}`,
-    // NEW: Includes domain prefix (climate.)
-    default_entity_id: `climate.nest_${serial}`,
+    default_entity_id: `climate.nest_${serial}`, // Updated from object_id
     device: {
       identifiers: [`nolongerevil_${serial}`],
       name: deviceName,
@@ -60,6 +61,9 @@ export function buildClimateDiscovery(
   };
 }
 
+/**
+ * Build Home Assistant discovery payload for Humidifier
+ */
 export function buildHumidifierDiscovery(
   serial: string,
   deviceName: string,
@@ -68,8 +72,6 @@ export function buildHumidifierDiscovery(
   return {
     unique_id: `nolongerevil_${serial}_humidifier`,
     name: `${deviceName} Humidifier`,
-    // DEPRECATED: object_id: `nest_${serial}_humidifier`,
-    // NEW: Includes domain prefix (humidifier.)
     default_entity_id: `humidifier.nest_${serial}_humidifier`,
     device: {
       identifiers: [`nolongerevil_${serial}`],
@@ -80,22 +82,21 @@ export function buildHumidifierDiscovery(
       payload_available: 'online',
       payload_not_available: 'offline',
     },
-    // 1. Switch (On/Off) - Direct to HA topic for smart handling
+    // 1. Switch (On/Off)
     command_topic: `${topicPrefix}/${serial}/ha/humidifier_enabled/set`,
     state_topic: `${topicPrefix}/${serial}/ha/humidifier_enabled`,
     payload_on: 'true',
     payload_off: 'false',
     
-    // 2. Slider (Target) - Direct to DEVICE topic so manual commands work too
-    target_humidity_command_topic: `${topicPrefix}/${serial}/device/target_humidity/set`,
+    // 2. Slider (Target)
+    // NOTE: Sending to /ha/ path now, so MqttIntegration handles logic
+    target_humidity_command_topic: `${topicPrefix}/${serial}/ha/target_humidity/set`,
     target_humidity_state_topic: `${topicPrefix}/${serial}/device/target_humidity`,
     min_humidity: 10,
     max_humidity: 60,
     
     // 3. Status
     action_topic: `${topicPrefix}/${serial}/ha/humidifier_action`,
-    
-    // 4. Current Humidity (Retaining your fix)
     current_humidity_topic: `${topicPrefix}/${serial}/ha/current_humidity`,
     
     device_class: 'humidifier',
@@ -111,7 +112,6 @@ export function buildTemperatureSensorDiscovery(serial: string, topicPrefix: str
   return {
     unique_id: `nolongerevil_${serial}_temperature`,
     name: `Temperature`,
-    // DEPRECATED: object_id: `nest_${serial}_temperature`,
     default_entity_id: `sensor.nest_${serial}_temperature`,
     device: { identifiers: [`nolongerevil_${serial}`] },
     state_topic: `${topicPrefix}/${serial}/ha/current_temperature`,
@@ -131,7 +131,6 @@ export function buildHumiditySensorDiscovery(serial: string, topicPrefix: string
   return {
     unique_id: `nolongerevil_${serial}_humidity`,
     name: `Humidity`,
-    // DEPRECATED: object_id: `nest_${serial}_humidity`,
     default_entity_id: `sensor.nest_${serial}_humidity`,
     device: { identifiers: [`nolongerevil_${serial}`] },
     state_topic: `${topicPrefix}/${serial}/ha/current_humidity`,
@@ -151,7 +150,6 @@ export function buildOutdoorTemperatureSensorDiscovery(serial: string, topicPref
   return {
     unique_id: `nolongerevil_${serial}_outdoor_temperature`,
     name: `Outdoor Temperature`,
-    // DEPRECATED: object_id: `nest_${serial}_outdoor_temperature`,
     default_entity_id: `sensor.nest_${serial}_outdoor_temperature`,
     device: { identifiers: [`nolongerevil_${serial}`] },
     state_topic: `${topicPrefix}/${serial}/ha/outdoor_temperature`,
@@ -171,7 +169,6 @@ export function buildOccupancyBinarySensorDiscovery(serial: string, topicPrefix:
   return {
     unique_id: `nolongerevil_${serial}_occupancy`,
     name: `Occupancy`,
-    // DEPRECATED: object_id: `nest_${serial}_occupancy`,
     default_entity_id: `binary_sensor.nest_${serial}_occupancy`,
     device: { identifiers: [`nolongerevil_${serial}`] },
     state_topic: `${topicPrefix}/${serial}/ha/occupancy`,
@@ -191,7 +188,6 @@ export function buildFanBinarySensorDiscovery(serial: string, topicPrefix: strin
   return {
     unique_id: `nolongerevil_${serial}_fan`,
     name: `Fan`,
-    // DEPRECATED: object_id: `nest_${serial}_fan`,
     default_entity_id: `binary_sensor.nest_${serial}_fan`,
     device: { identifiers: [`nolongerevil_${serial}`] },
     state_topic: `${topicPrefix}/${serial}/ha/fan_running`,
@@ -211,7 +207,6 @@ export function buildLeafBinarySensorDiscovery(serial: string, topicPrefix: stri
   return {
     unique_id: `nolongerevil_${serial}_leaf`,
     name: `Eco Mode`,
-    // DEPRECATED: object_id: `nest_${serial}_leaf`,
     default_entity_id: `binary_sensor.nest_${serial}_leaf`,
     device: { identifiers: [`nolongerevil_${serial}`] },
     state_topic: `${topicPrefix}/${serial}/ha/eco`,
@@ -227,6 +222,9 @@ export function buildLeafBinarySensorDiscovery(serial: string, topicPrefix: stri
   };
 }
 
+/**
+ * Publish all discovery messages for a thermostat
+ */
 export async function publishThermostatDiscovery(
   client: mqtt.MqttClient,
   serial: string,
@@ -238,8 +236,19 @@ export async function publishThermostatDiscovery(
     const deviceName = await resolveDeviceName(serial, deviceState);
     console.log(`[HA Discovery] Publishing discovery for ${serial} (${deviceName})`);
 
+    // 1. Fetch Device Data for Capabilities Check
+    const deviceObj = await deviceState.get(serial, `device.${serial}`);
+    const hasHumidifier = deviceObj?.value?.has_humidifier === true;
+
+    // 2. Publish Climate (Always)
     await publishDiscoveryMessage(client, `${discoveryPrefix}/climate/nest_${serial}/thermostat/config`, buildClimateDiscovery(serial, deviceName, topicPrefix));
-    await publishDiscoveryMessage(client, `${discoveryPrefix}/humidifier/nest_${serial}/humidifier/config`, buildHumidifierDiscovery(serial, deviceName, topicPrefix));
+
+    // 3. Publish Humidifier (Conditional)
+    if (hasHumidifier) {
+      await publishDiscoveryMessage(client, `${discoveryPrefix}/humidifier/nest_${serial}/humidifier/config`, buildHumidifierDiscovery(serial, deviceName, topicPrefix));
+    }
+
+    // 4. Publish Sensors
     await publishDiscoveryMessage(client, `${discoveryPrefix}/sensor/nest_${serial}/temperature/config`, buildTemperatureSensorDiscovery(serial, topicPrefix));
     await publishDiscoveryMessage(client, `${discoveryPrefix}/sensor/nest_${serial}/humidity/config`, buildHumiditySensorDiscovery(serial, topicPrefix));
     await publishDiscoveryMessage(client, `${discoveryPrefix}/sensor/nest_${serial}/outdoor_temperature/config`, buildOutdoorTemperatureSensorDiscovery(serial, topicPrefix));
@@ -271,7 +280,7 @@ async function publishDiscoveryMessage(client: mqtt.MqttClient, topic: string, c
 export async function removeDeviceDiscovery(client: mqtt.MqttClient, serial: string, discoveryPrefix: string): Promise<void> {
   const topics = [
     `${discoveryPrefix}/climate/nest_${serial}/thermostat/config`,
-    `${discoveryPrefix}/humidifier/nest_${serial}/humidifier/config`,
+    `${discoveryPrefix}/humidifier/nest_${serial}/humidifier/config`, // Added
     `${discoveryPrefix}/sensor/nest_${serial}/temperature/config`,
     `${discoveryPrefix}/sensor/nest_${serial}/humidity/config`,
     `${discoveryPrefix}/sensor/nest_${serial}/outdoor_temperature/config`,
