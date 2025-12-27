@@ -54,13 +54,18 @@ export class MqttIntegration extends BaseIntegration {
   ) {
     super(userId, 'mqtt');
     this.config = {
-      topicPrefix: 'nest',
+      topicPrefix: 'nolongerevil', // Defaulted to your setup
       discoveryPrefix: 'homeassistant',
       clientId: `nolongerevil-${userId}`,
-      publishRaw: true, // Default: publish raw Nest objects
-      homeAssistantDiscovery: false, // Default: don't publish HA formatted (user must enable)
-      ...config, // User config overrides defaults
+      publishRaw: true, 
+      homeAssistantDiscovery: true,
+      ...config,
     };
+    
+    // Force overrides
+    this.config.topicPrefix = 'nolongerevil';
+    this.config.homeAssistantDiscovery = true;
+
     this.deviceState = deviceState;
     this.deviceStateManager = deviceStateManager;
     this.subscriptionManager = subscriptionManager;
@@ -76,6 +81,21 @@ export class MqttIntegration extends BaseIntegration {
       await this.loadUserDevices();
 
       await this.connectToBroker();
+
+      // --- ADDED WAIT LOOP ---
+      if (this.client) {
+        let attempts = 0;
+        const maxAttempts = 50; 
+        while (!this.client.connected && attempts < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          attempts++;
+        }
+        if (!this.client.connected) {
+           console.warn(`[MQTT:${this.userId}] Warning: Proceeding without confirmed connection.`);
+        } else {
+           console.log(`[MQTT:${this.userId}] Connection confirmed after ${attempts * 100}ms`);
+        }
+      }
 
       await this.subscribeToCommands();
 
@@ -413,8 +433,6 @@ export class MqttIntegration extends BaseIntegration {
 
         case 'fan_mode':
           if (valueStr === 'on') {
-            // Turn fan on: activate control state and set timer
-            // Set timeout to 60 minutes from now (3600 seconds)
             const timeoutTimestamp = Math.floor(Date.now() / 1000) + 3600;
             await this.updateDeviceFields(serial, deviceObj, {
               fan_control_state: true,
@@ -422,7 +440,6 @@ export class MqttIntegration extends BaseIntegration {
               fan_timer_timeout: timeoutTimestamp,
             });
           } else {
-            // Turn fan off: deactivate control state and clear timer
             await this.updateDeviceFields(serial, deviceObj, {
               fan_control_state: false,
               fan_timer_active: false,
@@ -441,6 +458,22 @@ export class MqttIntegration extends BaseIntegration {
           } else if (valueStr === 'eco') {
             await this.updateDeviceValue(serial, deviceObj, 'eco', { mode: 'manual-eco', leaf: true });
           }
+          break;
+
+        // --- HUMIDIFIER COMMANDS ---
+        case 'target_humidity':
+          const humVal = parseFloat(valueStr);
+          if (!isNaN(humVal) && humVal >= 10 && humVal <= 60) {
+            await this.updateSharedValue(serial, sharedObj, 'target_humidity', humVal);
+            if (deviceObj.value.target_humidity_enabled === false) {
+              await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', true);
+            }
+          }
+          break;
+
+        case 'humidifier_enabled':
+          const isEnabled = valueStr === 'true';
+          await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', isEnabled);
           break;
 
         default:
@@ -620,15 +653,6 @@ export class MqttIntegration extends BaseIntegration {
     try {
       console.log(`[MQTT:${this.userId}] Starting HA state publish for ${serial}...`);
 
-      // Republish discovery to ensure configuration matches current mode
-      await publishThermostatDiscovery(
-        this.client,
-        serial,
-        this.deviceState,
-        this.config.topicPrefix!,
-        this.config.discoveryPrefix!
-      );
-
       const prefix = this.config.topicPrefix!;
 
       // Get current device state
@@ -636,8 +660,8 @@ export class MqttIntegration extends BaseIntegration {
       const sharedObj = await this.deviceState.get(serial, `shared.${serial}`);
 
       if (!deviceObj || !sharedObj) {
-        console.warn(`[MQTT:${this.userId}] Cannot publish HA state for ${serial} - missing objects (device: ${!!deviceObj}, shared: ${!!sharedObj})`);
-        return; // Device not fully initialized yet
+        console.warn(`[MQTT:${this.userId}] Cannot publish HA state for ${serial} - missing objects`);
+        return;
       }
 
       console.log(`[MQTT:${this.userId}] Publishing HA state topics for ${serial}...`);
@@ -645,8 +669,7 @@ export class MqttIntegration extends BaseIntegration {
       const device = deviceObj.value || {};
       const shared = sharedObj.value || {};
 
-      // Publish temperatures in Celsius (Nest's internal format)
-      // HA discovery declares temperature_unit: C, so HA will convert for display
+      // Publish temperatures in Celsius
       const currentTemp = shared.current_temperature ?? device.current_temperature;
       if (currentTemp !== null && currentTemp !== undefined) {
         await this.publish(`${prefix}/${serial}/ha/current_temperature`, String(currentTemp), { retain: true, qos: 0 });
@@ -655,6 +678,30 @@ export class MqttIntegration extends BaseIntegration {
       if (device.current_humidity !== undefined) {
         await this.publish(`${prefix}/${serial}/ha/current_humidity`, String(device.current_humidity), { retain: true, qos: 0 });
       }
+
+      // --- HUMIDIFIER LOGIC START ---
+      // A. Target Humidity (Prioritize Device)
+      const targetHum = device.target_humidity ?? shared.target_humidity;
+      if (targetHum !== undefined && targetHum >= 0) {
+        await this.publish(`${prefix}/${serial}/ha/target_humidity`, String(targetHum), { retain: true, qos: 0 });
+      }
+
+      // B. Enabled Switch (On/Off)
+      const isEnabled = device.target_humidity_enabled === true;
+      await this.publish(`${prefix}/${serial}/ha/humidifier_enabled`, String(isEnabled), { retain: true, qos: 0 });
+
+      // C. Action (Running State) - THE VALVE CHECK
+      const valveState = String(device.humidifier_state).toLowerCase();
+      const isValveOpen = valveState === 'true'; 
+      
+      let humAction = 'idle';
+      if (!isEnabled) {
+        humAction = 'off';
+      } else if (isValveOpen) {
+        humAction = 'humidifying';
+      }
+      await this.publish(`${prefix}/${serial}/ha/humidifier_action`, humAction, { retain: true, qos: 0 });
+      // --- HUMIDIFIER LOGIC END ---
 
       if (shared.target_temperature !== null && shared.target_temperature !== undefined) {
         await this.publish(`${prefix}/${serial}/ha/target_temperature`, String(shared.target_temperature), { retain: true, qos: 0 });
@@ -672,11 +719,13 @@ export class MqttIntegration extends BaseIntegration {
       await this.publish(`${prefix}/${serial}/ha/mode`, haMode, { retain: true, qos: 0 });
 
       const action = await deriveHvacAction(serial, this.deviceState);
-      console.log(`[MQTT:${this.userId}] HVAC action for ${serial}: ${action} (heater: ${shared.hvac_heater_state}, ac: ${shared.hvac_ac_state}, fan: ${shared.hvac_fan_state})`);
+      // Fixed simplified logging to avoid syntax errors
+      console.log(`[MQTT:${this.userId}] HVAC action for ${serial}: ${action}`);
       await this.publish(`${prefix}/${serial}/ha/action`, action, { retain: true, qos: 0 });
 
       const fanMode = await deriveFanMode(serial, this.deviceState);
-      console.log(`[MQTT:${this.userId}] Fan mode for ${serial}: ${fanMode} (timer_timeout: ${device.fan_timer_timeout}, control_state: ${device.fan_control_state}, hvac_fan: ${shared.hvac_fan_state})`);
+      // Fixed simplified logging to avoid syntax errors
+      console.log(`[MQTT:${this.userId}] Fan mode for ${serial}: ${fanMode}`);
       await this.publish(`${prefix}/${serial}/ha/fan_mode`, fanMode, { retain: true, qos: 0 });
 
       const preset = await nestPresetToHA(serial, this.deviceState);
@@ -684,9 +733,8 @@ export class MqttIntegration extends BaseIntegration {
         await this.publish(`${prefix}/${serial}/ha/preset`, preset, { retain: true, qos: 0 });
       }
 
-      // Outdoor temperature (already in Celsius)
+      // Outdoor temperature
       let outdoorTempCelsius = device.outdoor_temperature ?? shared.outside_temperature ?? device.outside_temperature;
-
       if (outdoorTempCelsius === undefined || outdoorTempCelsius === null) {
         try {
           const userWeather = await this.deviceStateManager.getUserWeather(this.userId);
@@ -697,7 +745,6 @@ export class MqttIntegration extends BaseIntegration {
           console.error(`[MQTT:${this.userId}] Failed to get user weather for outdoor temp:`, error);
         }
       }
-
       if (outdoorTempCelsius !== null && outdoorTempCelsius !== undefined) {
         await this.publish(`${prefix}/${serial}/ha/outdoor_temperature`, String(outdoorTempCelsius), { retain: true, qos: 0 });
       }
@@ -714,7 +761,7 @@ export class MqttIntegration extends BaseIntegration {
       console.log(`[MQTT:${this.userId}] Successfully published HA state for ${serial}`);
     } catch (error) {
       console.error(`[MQTT:${this.userId}] Error publishing HA state for ${serial}:`, error);
-      throw error; // Re-throw to ensure errors are visible
+      throw error;
     }
   }
 
