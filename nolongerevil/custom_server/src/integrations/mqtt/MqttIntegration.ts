@@ -78,7 +78,7 @@ export class MqttIntegration extends BaseIntegration {
       await this.loadUserDevices();
       await this.connectToBroker();
 
-      // --- WAIT LOOP (Fixes "Client not ready") ---
+      // --- WAIT LOOP ---
       if (this.client) {
         let attempts = 0;
         const maxAttempts = 50; 
@@ -292,47 +292,40 @@ export class MqttIntegration extends BaseIntegration {
           }
           break;
 
-        // --- FIXED HUMIDIFIER LOGIC ---
+        // --- UPDATED HUMIDIFIER LOGIC ---
         case 'target_humidity':
           let humVal = parseFloat(valueStr);
           if (!isNaN(humVal) && humVal >= 10 && humVal <= 60) {
-            // 1. ROUNDING: Force to nearest 5%
+            // 1. ROUNDING
             humVal = Math.round(humVal / 5) * 5;
-            
             console.log(`[MQTT:${this.userId}] Set Humidity: ${humVal}% (Rounded)`);
             
-            // 2. WRITE TO SHARED: This is what the thermostat actually reads
+            // 2. WRITE TO SHARED (The setpoint)
             await this.updateSharedValue(serial, sharedObj, 'target_humidity', humVal);
             
-            // 3. AUTO-ENABLE: If currently disabled, force 'shared.target_humidity_enabled' to true
-            // Using loose comparison in case it's string "false"
-            if (sharedObj.value.target_humidity_enabled == false) {
-               console.log(`[MQTT:${this.userId}] Auto-enabling humidifier...`);
-               await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', true);
-            }
+            // 3. FORCE ENABLE (Device & Shared) with every command
+            // This ensures the command isn't ignored because it was "off"
+            console.log(`[MQTT:${this.userId}] Force enabling humidifier with setpoint change`);
+            await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', true);
+            await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', true);
           }
           break;
 
         case 'humidifier_enabled':
           const isEnabled = valueStr === 'true';
           
-          // CRITICAL FIX: Write "Enabled" to SHARED, not just device.
-          // This unlocks the humidity control on the physical thermostat.
           console.log(`[MQTT:${this.userId}] Setting Humidifier Enabled: ${isEnabled}`);
           await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', isEnabled);
-          
-          // Also update device for immediate UI feedback
           await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', isEnabled);
 
           if (isEnabled) {
-            // Turning ON -> Set to 40% (default) if it was previously invalid
             const currentTgt = sharedObj.value.target_humidity;
+            // If turning ON and value is invalid, set default to 40%
             if (currentTgt === undefined || currentTgt < 0) {
+                console.log(`[MQTT:${this.userId}] Humidifier ON -> Force 40% default`);
                 await this.updateSharedValue(serial, sharedObj, 'target_humidity', 40);
             }
           }
-          // We do NOT set target to -1 here anymore, because the physical thermostat 
-          // prefers the boolean flag 'target_humidity_enabled' to determine on/off.
           break;
 
         default:
@@ -440,11 +433,11 @@ export class MqttIntegration extends BaseIntegration {
         await this.publish(`${prefix}/${serial}/ha/target_humidity`, String(targetHum), { retain: true, qos: 0 });
       }
 
-      // 2. Enabled State: We read this from SHARED now, as that's what the thermostat respects
+      // 2. Enabled State: From SHARED
       const isEnabled = shared.target_humidity_enabled === true;
       await this.publish(`${prefix}/${serial}/ha/humidifier_enabled`, String(isEnabled), { retain: true, qos: 0 });
 
-      // 3. Action / Valve State: Read from DEVICE (Physical reality)
+      // 3. Action / Valve State: From DEVICE
       const valveState = String(device.humidifier_state).toLowerCase();
       const isValveOpen = valveState === 'true'; 
       let humAction = 'idle';
