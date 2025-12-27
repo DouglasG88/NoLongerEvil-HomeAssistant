@@ -76,23 +76,20 @@ export function buildHumidifierDiscovery(
       payload_available: 'online',
       payload_not_available: 'offline',
     },
-    // 1. ON/OFF CONTROL (Switch)
-    // Matches: nolongerevil/.../ha/humidifier_enabled/set
+    // 1. Switch (On/Off) - Direct to HA topic for smart handling
     command_topic: `${topicPrefix}/${serial}/ha/humidifier_enabled/set`,
     state_topic: `${topicPrefix}/${serial}/ha/humidifier_enabled`,
     payload_on: 'true',
     payload_off: 'false',
     
-    // 2. TARGET HUMIDITY (Slider)
-    // Matches: nolongerevil/.../device/target_humidity/set
+    // 2. Slider (Target) - Direct to DEVICE topic so manual commands work too
+    // Intercepted in MqttIntegration to force "Enable: True"
     target_humidity_command_topic: `${topicPrefix}/${serial}/device/target_humidity/set`,
     target_humidity_state_topic: `${topicPrefix}/${serial}/device/target_humidity`,
     min_humidity: 10,
     max_humidity: 60,
     
-    // 3. STATUS (Action)
-    // Matches: nolongerevil/.../ha/humidifier_action
-    // HA automatically maps 'humidifying' and 'idle' correctly
+    // 3. Status
     action_topic: `${topicPrefix}/${serial}/ha/humidifier_action`,
     
     device_class: 'humidifier',
