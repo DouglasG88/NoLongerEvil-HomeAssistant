@@ -378,15 +378,30 @@ export class MqttIntegration extends BaseIntegration {
           break;
 
         case 'target_temperature':
-          await this.updateSharedValue(serial, sharedObj, 'target_temperature', validateTemperature(parseFloat(valueStr), sharedObj.value));
+          await this.updateSharedValue(
+            serial, 
+            sharedObj, 
+            'target_temperature', 
+            validateTemperature(parseFloat(valueStr), sharedObj.value)
+          );
           break;
 
         case 'target_temperature_low':
-          await this.updateSharedValue(serial, sharedObj, 'target_temperature_low', validateTemperature(parseFloat(valueStr), sharedObj.value));
+          await this.updateSharedValue(
+            serial, 
+            sharedObj, 
+            'target_temperature_low', 
+            validateTemperature(parseFloat(valueStr), sharedObj.value)
+          );
           break;
 
         case 'target_temperature_high':
-          await this.updateSharedValue(serial, sharedObj, 'target_temperature_high', validateTemperature(parseFloat(valueStr), sharedObj.value));
+          await this.updateSharedValue(
+            serial, 
+            sharedObj, 
+            'target_temperature_high', 
+            validateTemperature(parseFloat(valueStr), sharedObj.value)
+          );
           break;
 
         case 'fan_mode':
@@ -412,8 +427,6 @@ export class MqttIntegration extends BaseIntegration {
         case 'target_humidity':
           const humVal = parseFloat(valueStr);
           if (!isNaN(humVal) && humVal >= 10 && humVal <= 60) {
-            // Note: We don't know the exact write topic, but we update our shared/device state 
-            // so the UI reflects the change immediately.
             await this.updateSharedValue(serial, sharedObj, 'target_humidity', humVal);
             // If user moves slider, auto-enable
             if (deviceObj.value.target_humidity_enabled === false) {
@@ -449,152 +462,3 @@ export class MqttIntegration extends BaseIntegration {
   private async updateDeviceValue(serial: string, currentObj: any, field: string, value: any): Promise<void> {
     const objectKey = `device.${serial}`;
     const newValue = { ...currentObj.value, [field]: value };
-    const newRevision = currentObj.object_revision + 1;
-    const newTimestamp = Date.now();
-    const updatedObj = await this.deviceState.upsert(serial, objectKey, newRevision, newTimestamp, newValue);
-    this.subscriptionManager.notify(serial, objectKey, updatedObj);
-  }
-
-  private async updateDeviceFields(serial: string, currentObj: any, fields: Record<string, any>): Promise<void> {
-    const objectKey = `device.${serial}`;
-    const newValue = { ...currentObj.value, ...fields };
-    const newRevision = currentObj.object_revision + 1;
-    const newTimestamp = Date.now();
-    const updatedObj = await this.deviceState.upsert(serial, objectKey, newRevision, newTimestamp, newValue);
-    this.subscriptionManager.notify(serial, objectKey, updatedObj);
-  }
-
-  /**
-   * Publish Home Assistant discovery messages
-   */
-  private async publishDiscoveryMessages(): Promise<void> {
-    if (!this.client || !this.config.homeAssistantDiscovery) return;
-
-    console.log(`[MQTT:${this.userId}] Publishing HA discovery messages...`);
-    for (const serial of this.userDeviceSerials) {
-      try {
-        await publishThermostatDiscovery(
-          this.client,
-          serial,
-          this.deviceState,
-          this.config.topicPrefix!,
-          this.config.discoveryPrefix!
-        );
-      } catch (error) {
-        console.error(`[MQTT:${this.userId}] Failed to publish discovery for ${serial}:`, error);
-      }
-    }
-  }
-
-  /**
-   * Publish initial state for all user devices
-   */
-  private async publishInitialState(): Promise<void> {
-    if (!this.client) return;
-
-    console.log(`[MQTT:${this.userId}] Publishing initial state...`);
-    for (const serial of this.userDeviceSerials) {
-      try {
-        const deviceObjects = await this.deviceState.getAllForDevice(serial);
-        const objectKeys = Object.keys(deviceObjects);
-
-        if (objectKeys.length === 0) continue;
-
-        for (const objectKey of objectKeys) {
-          const obj = deviceObjects[objectKey];
-          await this.publishObjectState(serial, objectKey, obj.value, true); 
-        }
-
-        if (this.config.homeAssistantDiscovery) {
-          await this.publishHomeAssistantState(serial);
-        }
-
-        await this.publishAvailability(serial, 'online');
-      } catch (error) {
-        console.error(`[MQTT:${this.userId}] Failed to publish initial state for ${serial}:`, error);
-      }
-    }
-  }
-
-  /**
-   * Publish device state to MQTT (raw Nest objects)
-   */
-  private async publishObjectState(serial: string, objectKey: string, value: any, skipHA: boolean = false): Promise<void> {
-    if (!this.client || !this.isReady) return;
-
-    const parsed = parseObjectKey(objectKey);
-    if (!parsed) return;
-
-    if (this.config.publishRaw !== false) {
-      const fullTopic = buildStateTopic(this.config.topicPrefix!, serial, parsed.objectType);
-      await this.publish(fullTopic, JSON.stringify(value), { retain: true, qos: 0 });
-
-      for (const [field, fieldValue] of Object.entries(value)) {
-        const fieldTopic = buildStateTopic(this.config.topicPrefix!, serial, parsed.objectType, field);
-        const payload = typeof fieldValue === 'object' ? JSON.stringify(fieldValue) : String(fieldValue);
-        await this.publish(fieldTopic, payload, { retain: true, qos: 0 });
-      }
-    }
-
-    if (this.config.homeAssistantDiscovery && !skipHA) {
-      await this.publishHomeAssistantState(serial);
-    }
-  }
-
-  /**
-   * Publish Home Assistant formatted state for a device
-   */
-  private async publishHomeAssistantState(serial: string): Promise<void> {
-    if (!this.client || !this.isReady) return;
-
-    try {
-      const prefix = this.config.topicPrefix!;
-      const deviceObj = await this.deviceState.get(serial, `device.${serial}`);
-      const sharedObj = await this.deviceState.get(serial, `shared.${serial}`);
-
-      if (!deviceObj || !sharedObj) return;
-
-      const device = deviceObj.value || {};
-      const shared = sharedObj.value || {};
-
-      // 1. Temperatures & Humidity
-      const currentTemp = shared.current_temperature ?? device.current_temperature;
-      if (currentTemp !== undefined) {
-        await this.publish(`${prefix}/${serial}/ha/current_temperature`, String(currentTemp), { retain: true, qos: 0 });
-      }
-      if (device.current_humidity !== undefined) {
-        await this.publish(`${prefix}/${serial}/ha/current_humidity`, String(device.current_humidity), { retain: true, qos: 0 });
-      }
-
-      // 2. Humidifier State
-      const targetHum = device.target_humidity ?? shared.target_humidity;
-      if (targetHum !== undefined) {
-        await this.publish(`${prefix}/${serial}/ha/target_humidity`, String(targetHum), { retain: true, qos: 0 });
-      }
-      
-      const isEnabled = device.target_humidity_enabled === true;
-      await this.publish(`${prefix}/${serial}/ha/humidifier_enabled`, String(isEnabled), { retain: true, qos: 0 });
-
-      // Determine Action: Check the VALVE state ("device/humidifier_state")
-      const valveState = String(device.humidifier_state).toLowerCase(); // payload is "true"/"false"
-      const isValveOpen = valveState === 'true';
-      
-      let humAction = 'idle';
-      if (!isEnabled) {
-        humAction = 'off';
-      } else if (isValveOpen) {
-        humAction = 'humidifying';
-      }
-      await this.publish(`${prefix}/${serial}/ha/humidifier_action`, humAction, { retain: true, qos: 0 });
-
-      // 3. Thermostat Modes
-      await this.publish(`${prefix}/${serial}/ha/mode`, nestModeToHA(shared.target_temperature_type), { retain: true, qos: 0 });
-      await this.publish(`${prefix}/${serial}/ha/action`, await deriveHvacAction(serial, this.deviceState), { retain: true, qos: 0 });
-      
-      if (shared.target_temperature !== undefined) await this.publish(`${prefix}/${serial}/ha/target_temperature`, String(shared.target_temperature), { retain: true, qos: 0 });
-      if (shared.target_temperature_low !== undefined) await this.publish(`${prefix}/${serial}/ha/target_temperature_low`, String(shared.target_temperature_low), { retain: true, qos: 0 });
-      if (shared.target_temperature_high !== undefined) await this.publish(`${prefix}/${serial}/ha/target_temperature_high`, String(shared.target_temperature_high), { retain: true, qos: 0 });
-
-      // 4. Other
-      const fanMode = await deriveFanMode(serial, this.deviceState);
-      await this.publish(`${prefix}/${serial}/
