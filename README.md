@@ -1,5 +1,19 @@
 # NoLongerEvil Home Assistant Add-on
 
+Now with functioning humidifier.
+Running a custom server and not pulling from https://github.com/codykociemba/NoLongerEvil-Thermostat
+Currently assumes you have the humidifier set up on the thermostat and creates a humidifier entity.
+Further work needs to be done to check the humidifier assumption and also check for a dehumidifier and create that entity instead.
+humidifier quiet schedule is not implemented.
+setting the target humidity was really fussy. I had to send .../device/target_humidity_enabled/set true then whatever setpoint   such as../device/target_humidity_/set 40 sending to .../ha/... or .../shared/... didn't stick on the thermostat in my attempts.
+
+The only real changes are these files:
+NoLongerEvil-HomeAssistant/nolongerevil/custom_server/src/integrations/mqtt/HomeAssistantDiscovery.ts
+NoLongerEvil-HomeAssistant/nolongerevil/custom_server/src/integrations/mqtt/MqttIntegration.ts
+NoLongerEvil-HomeAssistant/nolongerevil/dockerfile (basically pointing to the new custom_server folder rather than Cody's
+
+
+
 [![Build Status](https://github.com/codykociemba/NoLongerEvil-HomeAssistant/actions/workflows/build.yaml/badge.svg)](https://github.com/codykociemba/NoLongerEvil-HomeAssistant/actions/workflows/build.yaml)
 [![License](https://img.shields.io/github/license/codykociemba/NoLongerEvil-HomeAssistant)](LICENSE)
 [![GitHub Release](https://img.shields.io/github/v/release/codykociemba/NoLongerEvil-HomeAssistant)](https://github.com/codykociemba/NoLongerEvil-HomeAssistant/releases)
