@@ -4,12 +4,11 @@
 [![GitHub Release](https://img.shields.io/github/v/release/codykociemba/NoLongerEvil-HomeAssistant)](https://github.com/codykociemba/NoLongerEvil-HomeAssistant/releases)
 [![Home Assistant Add-on](https://img.shields.io/badge/Home%20Assistant-Add--on-blue.svg)](https://www.home-assistant.io/addons/)
 
-Now with functioning humidifier.
+Now with functioning humidifier feature.
 Running a custom server and not pulling from https://github.com/codykociemba/NoLongerEvil-Thermostat
-Currently assumes you have the humidifier set up on the thermostat and creates a humidifier entity.
-Further work needs to be done to check the humidifier assumption and also check for a dehumidifier and create that entity instead.
-humidifier quiet schedule is not implemented.
-setting the target humidity was really fussy. I had to send .../device/target_humidity_enabled/set true then whatever setpoint   such as../device/target_humidity_/set 40 sending to .../ha/... or .../shared/... didn't stick on the thermostat in my attempts.
+checks if a humidifier is set up on the thermostat and creates an entity for it.
+humidifier quiet time not implemented but can be set and is handled on device.
+Further work needs to be done to check for a dehumidifier and create that entity instead.
 
 The only real changes are these files:
 NoLongerEvil-HomeAssistant/nolongerevil/custom_server/src/integrations/mqtt/HomeAssistantDiscovery.ts
