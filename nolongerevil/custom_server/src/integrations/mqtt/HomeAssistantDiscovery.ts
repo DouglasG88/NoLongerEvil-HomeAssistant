@@ -17,7 +17,9 @@ export function buildClimateDiscovery(
   return {
     unique_id: `nolongerevil_${serial}`,
     name: deviceName,
-    object_id: `nest_${serial}`,
+    // DEPRECATED: object_id: `nest_${serial}`,
+    // NEW: Includes domain prefix (climate.)
+    default_entity_id: `climate.nest_${serial}`,
     device: {
       identifiers: [`nolongerevil_${serial}`],
       name: deviceName,
@@ -66,7 +68,9 @@ export function buildHumidifierDiscovery(
   return {
     unique_id: `nolongerevil_${serial}_humidifier`,
     name: `${deviceName} Humidifier`,
-    object_id: `nest_${serial}_humidifier`,
+    // DEPRECATED: object_id: `nest_${serial}_humidifier`,
+    // NEW: Includes domain prefix (humidifier.)
+    default_entity_id: `humidifier.nest_${serial}_humidifier`,
     device: {
       identifiers: [`nolongerevil_${serial}`],
       name: deviceName,
@@ -88,9 +92,11 @@ export function buildHumidifierDiscovery(
     min_humidity: 10,
     max_humidity: 60,
     
-    // 3. Status & Current Humidity
+    // 3. Status
     action_topic: `${topicPrefix}/${serial}/ha/humidifier_action`,
-    current_humidity_topic: `${topicPrefix}/${serial}/ha/current_humidity`, // <--- This was missing
+    
+    // 4. Current Humidity (Retaining your fix)
+    current_humidity_topic: `${topicPrefix}/${serial}/ha/current_humidity`,
     
     device_class: 'humidifier',
     origin: {
@@ -105,7 +111,8 @@ export function buildTemperatureSensorDiscovery(serial: string, topicPrefix: str
   return {
     unique_id: `nolongerevil_${serial}_temperature`,
     name: `Temperature`,
-    object_id: `nest_${serial}_temperature`,
+    // DEPRECATED: object_id: `nest_${serial}_temperature`,
+    default_entity_id: `sensor.nest_${serial}_temperature`,
     device: { identifiers: [`nolongerevil_${serial}`] },
     state_topic: `${topicPrefix}/${serial}/ha/current_temperature`,
     unit_of_measurement: '°C',
@@ -124,7 +131,8 @@ export function buildHumiditySensorDiscovery(serial: string, topicPrefix: string
   return {
     unique_id: `nolongerevil_${serial}_humidity`,
     name: `Humidity`,
-    object_id: `nest_${serial}_humidity`,
+    // DEPRECATED: object_id: `nest_${serial}_humidity`,
+    default_entity_id: `sensor.nest_${serial}_humidity`,
     device: { identifiers: [`nolongerevil_${serial}`] },
     state_topic: `${topicPrefix}/${serial}/ha/current_humidity`,
     unit_of_measurement: '%',
@@ -143,7 +151,8 @@ export function buildOutdoorTemperatureSensorDiscovery(serial: string, topicPref
   return {
     unique_id: `nolongerevil_${serial}_outdoor_temperature`,
     name: `Outdoor Temperature`,
-    object_id: `nest_${serial}_outdoor_temperature`,
+    // DEPRECATED: object_id: `nest_${serial}_outdoor_temperature`,
+    default_entity_id: `sensor.nest_${serial}_outdoor_temperature`,
     device: { identifiers: [`nolongerevil_${serial}`] },
     state_topic: `${topicPrefix}/${serial}/ha/outdoor_temperature`,
     unit_of_measurement: '°C',
@@ -162,7 +171,8 @@ export function buildOccupancyBinarySensorDiscovery(serial: string, topicPrefix:
   return {
     unique_id: `nolongerevil_${serial}_occupancy`,
     name: `Occupancy`,
-    object_id: `nest_${serial}_occupancy`,
+    // DEPRECATED: object_id: `nest_${serial}_occupancy`,
+    default_entity_id: `binary_sensor.nest_${serial}_occupancy`,
     device: { identifiers: [`nolongerevil_${serial}`] },
     state_topic: `${topicPrefix}/${serial}/ha/occupancy`,
     payload_on: 'home',
@@ -181,7 +191,8 @@ export function buildFanBinarySensorDiscovery(serial: string, topicPrefix: strin
   return {
     unique_id: `nolongerevil_${serial}_fan`,
     name: `Fan`,
-    object_id: `nest_${serial}_fan`,
+    // DEPRECATED: object_id: `nest_${serial}_fan`,
+    default_entity_id: `binary_sensor.nest_${serial}_fan`,
     device: { identifiers: [`nolongerevil_${serial}`] },
     state_topic: `${topicPrefix}/${serial}/ha/fan_running`,
     payload_on: 'true',
@@ -200,7 +211,8 @@ export function buildLeafBinarySensorDiscovery(serial: string, topicPrefix: stri
   return {
     unique_id: `nolongerevil_${serial}_leaf`,
     name: `Eco Mode`,
-    object_id: `nest_${serial}_leaf`,
+    // DEPRECATED: object_id: `nest_${serial}_leaf`,
+    default_entity_id: `binary_sensor.nest_${serial}_leaf`,
     device: { identifiers: [`nolongerevil_${serial}`] },
     state_topic: `${topicPrefix}/${serial}/ha/eco`,
     payload_on: 'true',
