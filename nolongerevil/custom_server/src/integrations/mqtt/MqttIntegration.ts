@@ -62,7 +62,7 @@ export class MqttIntegration extends BaseIntegration {
       ...config,
     };
     
-    // Force overrides
+    // Force overrides to match your setup
     this.config.topicPrefix = 'nolongerevil';
     this.config.homeAssistantDiscovery = true;
 
@@ -71,18 +71,14 @@ export class MqttIntegration extends BaseIntegration {
     this.subscriptionManager = subscriptionManager;
   }
 
-  /**
-   * Initialize MQTT connection
-   */
   async initialize(): Promise<void> {
     console.log(`[MQTT:${this.userId}] Initializing MQTT integration...`);
 
     try {
       await this.loadUserDevices();
-
       await this.connectToBroker();
 
-      // --- WAIT LOOP ---
+      // --- WAIT LOOP (Fixes "Client not ready") ---
       if (this.client) {
         let attempts = 0;
         const maxAttempts = 50; 
@@ -98,13 +94,9 @@ export class MqttIntegration extends BaseIntegration {
       }
 
       await this.subscribeToCommands();
-
       await this.publishDiscoveryMessages();
-
       await this.publishInitialState();
-
       this.startDeviceWatching();
-
       this.isReady = true;
       console.log(`[MQTT:${this.userId}] Integration initialized successfully`);
     } catch (error) {
@@ -113,43 +105,26 @@ export class MqttIntegration extends BaseIntegration {
     }
   }
 
-  /**
-   * Start polling for device changes
-   */
   private startDeviceWatching(): void {
-    if (this.deviceWatchInterval) {
-      clearInterval(this.deviceWatchInterval);
-    }
-
+    if (this.deviceWatchInterval) clearInterval(this.deviceWatchInterval);
     this.deviceWatchInterval = setInterval(async () => {
       await this.checkForDeviceChanges();
     }, 10000);
-
     console.log(`[MQTT:${this.userId}] Started watching for device changes (polling every 10s)`);
   }
 
-  /**
-   * Check for added/removed devices and update accordingly
-   */
   private async checkForDeviceChanges(): Promise<void> {
     if (!this.isReady) return;
-
     try {
       const ownedDevices = await this.deviceStateManager.listUserDevices(this.userId);
       const sharedDevices = await this.deviceStateManager.getSharedWithMe(this.userId);
 
       const currentSerials = new Set<string>();
-      for (const device of ownedDevices) {
-        currentSerials.add(device.serial);
-      }
-      for (const share of sharedDevices) {
-        currentSerials.add(share.serial);
-      }
+      for (const device of ownedDevices) currentSerials.add(device.serial);
+      for (const share of sharedDevices) currentSerials.add(share.serial);
 
       for (const serial of this.userDeviceSerials) {
-        if (!currentSerials.has(serial)) {
-          await this.handleDeviceRemoved(serial);
-        }
+        if (!currentSerials.has(serial)) await this.handleDeviceRemoved(serial);
       }
 
       for (const serial of currentSerials) {
@@ -270,9 +245,6 @@ export class MqttIntegration extends BaseIntegration {
     }
   }
 
-  /**
-   * Handle Home Assistant formatted command
-   */
   private async handleHomeAssistantCommand(topic: string, message: Buffer): Promise<void> {
     try {
       const prefix = this.config.topicPrefix!;
@@ -320,27 +292,47 @@ export class MqttIntegration extends BaseIntegration {
           }
           break;
 
-        // --- MODIFIED HUMIDIFIER LOGIC ---
+        // --- FIXED HUMIDIFIER LOGIC ---
         case 'target_humidity':
-          const humVal = parseFloat(valueStr);
+          let humVal = parseFloat(valueStr);
           if (!isNaN(humVal) && humVal >= 10 && humVal <= 60) {
-            // Simply update the setpoint. 
-            // If the user moves the slider, we assume they want that value.
+            // 1. ROUNDING: Force to nearest 5%
+            humVal = Math.round(humVal / 5) * 5;
+            
+            console.log(`[MQTT:${this.userId}] Set Humidity: ${humVal}% (Rounded)`);
+            
+            // 2. WRITE TO SHARED: This is what the thermostat actually reads
             await this.updateSharedValue(serial, sharedObj, 'target_humidity', humVal);
+            
+            // 3. AUTO-ENABLE: If currently disabled, force 'shared.target_humidity_enabled' to true
+            // Using loose comparison in case it's string "false"
+            if (sharedObj.value.target_humidity_enabled == false) {
+               console.log(`[MQTT:${this.userId}] Auto-enabling humidifier...`);
+               await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', true);
+            }
           }
           break;
 
         case 'humidifier_enabled':
           const isEnabled = valueStr === 'true';
+          
+          // CRITICAL FIX: Write "Enabled" to SHARED, not just device.
+          // This unlocks the humidity control on the physical thermostat.
+          console.log(`[MQTT:${this.userId}] Setting Humidifier Enabled: ${isEnabled}`);
+          await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', isEnabled);
+          
+          // Also update device for immediate UI feedback
+          await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', isEnabled);
+
           if (isEnabled) {
-            // Turn ON: Set to 40% (default start point)
-            console.log(`[MQTT:${this.userId}] Turning Humidifier ON -> Setting target to 40%`);
-            await this.updateSharedValue(serial, sharedObj, 'target_humidity', 40);
-          } else {
-            // Turn OFF: Set to -1.0
-            console.log(`[MQTT:${this.userId}] Turning Humidifier OFF -> Setting target to -1`);
-            await this.updateSharedValue(serial, sharedObj, 'target_humidity', -1);
+            // Turning ON -> Set to 40% (default) if it was previously invalid
+            const currentTgt = sharedObj.value.target_humidity;
+            if (currentTgt === undefined || currentTgt < 0) {
+                await this.updateSharedValue(serial, sharedObj, 'target_humidity', 40);
+            }
           }
+          // We do NOT set target to -1 here anymore, because the physical thermostat 
+          // prefers the boolean flag 'target_humidity_enabled' to determine on/off.
           break;
 
         default:
@@ -356,27 +348,21 @@ export class MqttIntegration extends BaseIntegration {
   private async updateSharedValue(serial: string, currentObj: any, field: string, value: any): Promise<void> {
     const objectKey = `shared.${serial}`;
     const newValue = { ...currentObj.value, [field]: value };
-    const newRevision = currentObj.object_revision + 1;
-    const newTimestamp = Date.now();
-    const updatedObj = await this.deviceState.upsert(serial, objectKey, newRevision, newTimestamp, newValue);
+    const updatedObj = await this.deviceState.upsert(serial, objectKey, currentObj.object_revision + 1, Date.now(), newValue);
     this.subscriptionManager.notify(serial, objectKey, updatedObj);
   }
 
   private async updateDeviceValue(serial: string, currentObj: any, field: string, value: any): Promise<void> {
     const objectKey = `device.${serial}`;
     const newValue = { ...currentObj.value, [field]: value };
-    const newRevision = currentObj.object_revision + 1;
-    const newTimestamp = Date.now();
-    const updatedObj = await this.deviceState.upsert(serial, objectKey, newRevision, newTimestamp, newValue);
+    const updatedObj = await this.deviceState.upsert(serial, objectKey, currentObj.object_revision + 1, Date.now(), newValue);
     this.subscriptionManager.notify(serial, objectKey, updatedObj);
   }
 
   private async updateDeviceFields(serial: string, currentObj: any, fields: Record<string, any>): Promise<void> {
     const objectKey = `device.${serial}`;
     const newValue = { ...currentObj.value, ...fields };
-    const newRevision = currentObj.object_revision + 1;
-    const newTimestamp = Date.now();
-    const updatedObj = await this.deviceState.upsert(serial, objectKey, newRevision, newTimestamp, newValue);
+    const updatedObj = await this.deviceState.upsert(serial, objectKey, currentObj.object_revision + 1, Date.now(), newValue);
     this.subscriptionManager.notify(serial, objectKey, updatedObj);
   }
 
@@ -408,9 +394,7 @@ export class MqttIntegration extends BaseIntegration {
           const obj = deviceObjects[objectKey];
           await this.publishObjectState(serial, objectKey, obj.value, true); 
         }
-        if (this.config.homeAssistantDiscovery) {
-          await this.publishHomeAssistantState(serial);
-        }
+        if (this.config.homeAssistantDiscovery) await this.publishHomeAssistantState(serial);
         await this.publishAvailability(serial, 'online');
       } catch (error) {
         console.error(`[MQTT:${this.userId}] Failed to publish initial state for ${serial}:`, error);
@@ -431,52 +415,38 @@ export class MqttIntegration extends BaseIntegration {
         await this.publish(fieldTopic, payload, { retain: true, qos: 0 });
       }
     }
-    if (this.config.homeAssistantDiscovery && !skipHA) {
-      await this.publishHomeAssistantState(serial);
-    }
+    if (this.config.homeAssistantDiscovery && !skipHA) await this.publishHomeAssistantState(serial);
   }
 
-  /**
-   * Publish Home Assistant formatted state for a device
-   */
   private async publishHomeAssistantState(serial: string): Promise<void> {
     if (!this.client || !this.isReady) return;
-
     try {
       const prefix = this.config.topicPrefix!;
       const deviceObj = await this.deviceState.get(serial, `device.${serial}`);
       const sharedObj = await this.deviceState.get(serial, `shared.${serial}`);
-
       if (!deviceObj || !sharedObj) return;
 
       const device = deviceObj.value || {};
       const shared = sharedObj.value || {};
 
-      // 1. Temperatures & Humidity
       const currentTemp = shared.current_temperature ?? device.current_temperature;
-      if (currentTemp !== undefined) {
-        await this.publish(`${prefix}/${serial}/ha/current_temperature`, String(currentTemp), { retain: true, qos: 0 });
-      }
-      if (device.current_humidity !== undefined) {
-        await this.publish(`${prefix}/${serial}/ha/current_humidity`, String(device.current_humidity), { retain: true, qos: 0 });
-      }
+      if (currentTemp !== undefined) await this.publish(`${prefix}/${serial}/ha/current_temperature`, String(currentTemp), { retain: true, qos: 0 });
+      if (device.current_humidity !== undefined) await this.publish(`${prefix}/${serial}/ha/current_humidity`, String(device.current_humidity), { retain: true, qos: 0 });
 
-      // --- MODIFIED HUMIDIFIER STATE ---
-      // A. Target Humidity (Setpoint) - From Device or Shared
+      // --- PUBLISH HUMIDIFIER STATE ---
+      // 1. Target Humidity
       const targetHum = device.target_humidity ?? shared.target_humidity;
-      // Only publish if valid (>= 0), so slider doesn't get -1
       if (targetHum !== undefined && targetHum >= 0) {
         await this.publish(`${prefix}/${serial}/ha/target_humidity`, String(targetHum), { retain: true, qos: 0 });
       }
 
-      // B. Enabled State: Derived from whether target_humidity != -1
-      const isEnabled = targetHum !== -1;
+      // 2. Enabled State: We read this from SHARED now, as that's what the thermostat respects
+      const isEnabled = shared.target_humidity_enabled === true;
       await this.publish(`${prefix}/${serial}/ha/humidifier_enabled`, String(isEnabled), { retain: true, qos: 0 });
 
-      // C. Action / Valve State
+      // 3. Action / Valve State: Read from DEVICE (Physical reality)
       const valveState = String(device.humidifier_state).toLowerCase();
       const isValveOpen = valveState === 'true'; 
-      
       let humAction = 'idle';
       if (!isEnabled) {
         humAction = 'off';
@@ -484,28 +454,24 @@ export class MqttIntegration extends BaseIntegration {
         humAction = 'humidifying';
       }
       await this.publish(`${prefix}/${serial}/ha/humidifier_action`, humAction, { retain: true, qos: 0 });
-      // --- END MODIFIED HUMIDIFIER STATE ---
 
       if (shared.target_temperature !== undefined) await this.publish(`${prefix}/${serial}/ha/target_temperature`, String(shared.target_temperature), { retain: true, qos: 0 });
       if (shared.target_temperature_low !== undefined) await this.publish(`${prefix}/${serial}/ha/target_temperature_low`, String(shared.target_temperature_low), { retain: true, qos: 0 });
       if (shared.target_temperature_high !== undefined) await this.publish(`${prefix}/${serial}/ha/target_temperature_high`, String(shared.target_temperature_high), { retain: true, qos: 0 });
 
-      const haMode = nestModeToHA(shared.target_temperature_type);
-      await this.publish(`${prefix}/${serial}/ha/mode`, haMode, { retain: true, qos: 0 });
+      await this.publish(`${prefix}/${serial}/ha/mode`, nestModeToHA(shared.target_temperature_type), { retain: true, qos: 0 });
       await this.publish(`${prefix}/${serial}/ha/action`, await deriveHvacAction(serial, this.deviceState), { retain: true, qos: 0 });
-      
-      const fanMode = await deriveFanMode(serial, this.deviceState);
-      await this.publish(`${prefix}/${serial}/ha/fan_mode`, fanMode, { retain: true, qos: 0 });
+      await this.publish(`${prefix}/${serial}/ha/fan_mode`, await deriveFanMode(serial, this.deviceState), { retain: true, qos: 0 });
       
       const preset = await nestPresetToHA(serial, this.deviceState);
       if (preset) await this.publish(`${prefix}/${serial}/ha/preset`, preset, { retain: true, qos: 0 });
-      
+
       let outdoorTempCelsius = device.outdoor_temperature ?? shared.outside_temperature ?? device.outside_temperature;
       if (outdoorTempCelsius === undefined) {
         try {
           const userWeather = await this.deviceStateManager.getUserWeather(this.userId);
           if (userWeather?.current?.temp_c !== undefined) outdoorTempCelsius = userWeather.current.temp_c;
-        } catch (e) { /* ignore */ }
+        } catch (e) {}
       }
       if (outdoorTempCelsius !== undefined) await this.publish(`${prefix}/${serial}/ha/outdoor_temperature`, String(outdoorTempCelsius), { retain: true, qos: 0 });
 
