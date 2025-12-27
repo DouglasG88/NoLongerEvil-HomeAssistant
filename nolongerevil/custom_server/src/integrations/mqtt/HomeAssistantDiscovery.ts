@@ -76,20 +76,23 @@ export function buildHumidifierDiscovery(
       payload_available: 'online',
       payload_not_available: 'offline',
     },
-    // Switch: Uses target_humidity_enabled
-    command_topic: `${topicPrefix}/${serial}/ha/target_humidity_enabled/set`,
-    state_topic: `${topicPrefix}/${serial}/ha/target_humidity_enabled`,
+    // 1. ON/OFF CONTROL (Switch)
+    // Matches: nolongerevil/.../ha/humidifier_enabled/set
+    command_topic: `${topicPrefix}/${serial}/ha/humidifier_enabled/set`,
+    state_topic: `${topicPrefix}/${serial}/ha/humidifier_enabled`,
     payload_on: 'true',
     payload_off: 'false',
     
-    // Slider: Uses target_humidity
-    target_humidity_command_topic: `${topicPrefix}/${serial}/ha/target_humidity/set`,
-    target_humidity_state_topic: `${topicPrefix}/${serial}/ha/target_humidity`,
+    // 2. TARGET HUMIDITY (Slider)
+    // Matches: nolongerevil/.../device/target_humidity/set
+    target_humidity_command_topic: `${topicPrefix}/${serial}/device/target_humidity/set`,
+    target_humidity_state_topic: `${topicPrefix}/${serial}/device/target_humidity`,
     min_humidity: 10,
     max_humidity: 60,
     
-    // Status
-    current_humidity_topic: `${topicPrefix}/${serial}/ha/current_humidity`,
+    // 3. STATUS (Action)
+    // Matches: nolongerevil/.../ha/humidifier_action
+    // HA automatically maps 'humidifying' and 'idle' correctly
     action_topic: `${topicPrefix}/${serial}/ha/humidifier_action`,
     
     device_class: 'humidifier',
