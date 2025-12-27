@@ -62,7 +62,6 @@ export class MqttIntegration extends BaseIntegration {
       ...config,
     };
     
-    // Force overrides
     this.config.topicPrefix = 'nolongerevil';
     this.config.homeAssistantDiscovery = true;
 
@@ -78,7 +77,6 @@ export class MqttIntegration extends BaseIntegration {
       await this.loadUserDevices();
       await this.connectToBroker();
 
-      // --- WAIT LOOP ---
       if (this.client) {
         let attempts = 0;
         const maxAttempts = 50; 
@@ -257,8 +255,8 @@ export class MqttIntegration extends BaseIntegration {
 
       console.log(`[MQTT:${this.userId}] HA Command: ${serial}/${command} = ${valueStr}`);
 
-      const deviceObj = await this.deviceState.get(serial, `device.${serial}`);
-      const sharedObj = await this.deviceState.get(serial, `shared.${serial}`);
+      let deviceObj = await this.deviceState.get(serial, `device.${serial}`);
+      let sharedObj = await this.deviceState.get(serial, `shared.${serial}`);
       if (!deviceObj || !sharedObj) return;
 
       switch (command) {
@@ -292,32 +290,37 @@ export class MqttIntegration extends BaseIntegration {
           }
           break;
 
-        // --- ORDERED HUMIDITY LOGIC ---
+        // --- ORDERED HUMIDITY LOGIC WITH DIRECT PUBLISH ---
         case 'target_humidity':
           let humVal = parseFloat(valueStr);
           if (!isNaN(humVal) && humVal >= 10 && humVal <= 60) {
             humVal = Math.round(humVal / 5) * 5;
             
-            console.log(`[MQTT:${this.userId}] Set Humidity Sequence: Enable -> Wait -> Set ${humVal}%`);
+            console.log(`[MQTT:${this.userId}] Set Humidity Sequence: Enable -> Wait 500ms -> Set ${humVal}%`);
 
-            // 1. FORCE ENABLE FIRST
-            await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', true);
-            await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', true);
+            // 1. FORCE ENABLE (Direct Publish + DB Update)
+            // We publish directly to bypass any async delays in state change listeners
+            const enableTopic = `${prefix}/${serial}/shared/target_humidity_enabled`;
+            await this.publish(enableTopic, 'true', { retain: true, qos: 0 });
+            
+            // Also update DB
+            sharedObj = await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', true);
+            deviceObj = await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', true);
 
-            // 2. WAIT for thermostat to register the "Enable" command
-            await new Promise(r => setTimeout(r, 200));
+            // 2. WAIT
+            await new Promise(r => setTimeout(r, 500));
 
-            // 3. SET VALUE SECOND
+            // 3. SET VALUE
             await this.updateSharedValue(serial, sharedObj, 'target_humidity', humVal);
             await this.updateDeviceValue(serial, deviceObj, 'target_humidity', humVal);
           }
           break;
 
-        // UPDATED: Using 'target_humidity_enabled'
         case 'target_humidity_enabled':
         case 'humidifier_enabled': 
           const isEnabled = valueStr === 'true';
           console.log(`[MQTT:${this.userId}] Setting Humidifier Enabled: ${isEnabled}`);
+          
           await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', isEnabled);
           await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', isEnabled);
 
@@ -339,25 +342,28 @@ export class MqttIntegration extends BaseIntegration {
     }
   }
 
-  private async updateSharedValue(serial: string, currentObj: any, field: string, value: any): Promise<void> {
+  private async updateSharedValue(serial: string, currentObj: any, field: string, value: any): Promise<any> {
     const objectKey = `shared.${serial}`;
     const newValue = { ...currentObj.value, [field]: value };
     const updatedObj = await this.deviceState.upsert(serial, objectKey, currentObj.object_revision + 1, Date.now(), newValue);
     this.subscriptionManager.notify(serial, objectKey, updatedObj);
+    return updatedObj;
   }
 
-  private async updateDeviceValue(serial: string, currentObj: any, field: string, value: any): Promise<void> {
+  private async updateDeviceValue(serial: string, currentObj: any, field: string, value: any): Promise<any> {
     const objectKey = `device.${serial}`;
     const newValue = { ...currentObj.value, [field]: value };
     const updatedObj = await this.deviceState.upsert(serial, objectKey, currentObj.object_revision + 1, Date.now(), newValue);
     this.subscriptionManager.notify(serial, objectKey, updatedObj);
+    return updatedObj;
   }
 
-  private async updateDeviceFields(serial: string, currentObj: any, fields: Record<string, any>): Promise<void> {
+  private async updateDeviceFields(serial: string, currentObj: any, fields: Record<string, any>): Promise<any> {
     const objectKey = `device.${serial}`;
     const newValue = { ...currentObj.value, ...fields };
     const updatedObj = await this.deviceState.upsert(serial, objectKey, currentObj.object_revision + 1, Date.now(), newValue);
     this.subscriptionManager.notify(serial, objectKey, updatedObj);
+    return updatedObj;
   }
 
   private async publishDiscoveryMessages(): Promise<void> {
@@ -433,12 +439,9 @@ export class MqttIntegration extends BaseIntegration {
         await this.publish(`${prefix}/${serial}/ha/target_humidity`, String(targetHum), { retain: true, qos: 0 });
       }
 
-      // Enabled State: From SHARED
       const isEnabled = shared.target_humidity_enabled === true;
-      // UPDATED: topic matches 'target_humidity_enabled'
       await this.publish(`${prefix}/${serial}/ha/target_humidity_enabled`, String(isEnabled), { retain: true, qos: 0 });
 
-      // Action / Valve State: From DEVICE
       const valveState = String(device.humidifier_state).toLowerCase();
       const isValveOpen = valveState === 'true'; 
       let humAction = 'idle';
