@@ -108,57 +108,6 @@ export function buildClimateDiscovery(
 }
 
 /**
- * Build Home Assistant discovery payload for the Humidifier
- */
-export function buildHumidifierDiscovery(
-  serial: string,
-  deviceName: string,
-  topicPrefix: string
-): any {
-  return {
-    unique_id: `nolongerevil_${serial}_humidifier`,
-    name: `${deviceName} Humidifier`,
-    object_id: `nest_${serial}_humidifier`,
-
-    device: {
-      identifiers: [`nolongerevil_${serial}`],
-      name: deviceName,
-    },
-
-    availability: {
-      topic: `${topicPrefix}/${serial}/availability`,
-      payload_available: 'online',
-      payload_not_available: 'offline',
-    },
-
-    // The On/Off Switch
-    command_topic: `${topicPrefix}/${serial}/ha/humidifier_enabled/set`,
-    state_topic: `${topicPrefix}/${serial}/ha/humidifier_enabled`,
-    payload_on: 'true',
-    payload_off: 'false',
-    
-    // The Slider
-    target_humidity_command_topic: `${topicPrefix}/${serial}/ha/target_humidity/set`,
-    target_humidity_state_topic: `${topicPrefix}/${serial}/ha/target_humidity`,
-    min_humidity: 10,
-    max_humidity: 60,
-    
-    // Status (Current reading & Action)
-    current_humidity_topic: `${topicPrefix}/${serial}/ha/current_humidity`,
-    
-    // Action topic determines if the icon is Blue (Humidifying) or Grey (Idle)
-    action_topic: `${topicPrefix}/${serial}/ha/humidifier_action`,
-    
-    device_class: 'humidifier',
-    origin: {
-        name: 'NoLongerEvil',
-        sw_version: '1.0.0'
-    },
-    qos: 1
-  };
-}
-
-/**
  * Build Home Assistant discovery payload for temperature sensor
  */
 export function buildTemperatureSensorDiscovery(
@@ -362,19 +311,12 @@ export async function publishThermostatDiscovery(
     console.log(`[HA Discovery] Publishing discovery for ${serial} (${deviceName})`);
 
     // Climate entity (main thermostat control)
+    // Always uses Celsius - HA handles user display preferences
     const climateConfig = buildClimateDiscovery(serial, deviceName, topicPrefix);
     await publishDiscoveryMessage(
       client,
       `${discoveryPrefix}/climate/nest_${serial}/thermostat/config`,
       climateConfig
-    );
-
-    // Humidifier entity (NEW)
-    const humidifierConfig = buildHumidifierDiscovery(serial, deviceName, topicPrefix);
-    await publishDiscoveryMessage(
-      client,
-      `${discoveryPrefix}/humidifier/nest_${serial}/humidifier/config`,
-      humidifierConfig
     );
 
     // Temperature sensor
@@ -463,7 +405,6 @@ export async function removeDeviceDiscovery(
 ): Promise<void> {
   const topics = [
     `${discoveryPrefix}/climate/nest_${serial}/thermostat/config`,
-    `${discoveryPrefix}/humidifier/nest_${serial}/humidifier/config`, // Added
     `${discoveryPrefix}/sensor/nest_${serial}/temperature/config`,
     `${discoveryPrefix}/sensor/nest_${serial}/humidity/config`,
     `${discoveryPrefix}/sensor/nest_${serial}/outdoor_temperature/config`,
