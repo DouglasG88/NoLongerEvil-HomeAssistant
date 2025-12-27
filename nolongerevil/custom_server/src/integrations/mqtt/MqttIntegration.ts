@@ -293,19 +293,25 @@ export class MqttIntegration extends BaseIntegration {
         // --- ATOMIC HUMIDITY UPDATES ---
         // This solves the issue where the thermostat sees "Enable" then "Target" separately.
         // We now bundle them into ONE update to the 'shared' object.
+       // ... inside handleHomeAssistantCommand switch statement ...
+
         case 'target_humidity':
           let humVal = parseFloat(valueStr);
+          // Only accept valid range 10-60. Ignore -1 as per requirements.
           if (!isNaN(humVal) && humVal >= 10 && humVal <= 60) {
+            // Enforce step of 5
             humVal = Math.round(humVal / 5) * 5;
-            console.log(`[MQTT:${this.userId}] Atomic Update: Set Humidity ${humVal}% + Enable`);
+            
+            // User requirement: "set by setting target_humidity_enabled true AND target_humidity value"
+            console.log(`[MQTT:${this.userId}] Setting Humidity Target: ${humVal}%`);
 
-            // Update SHARED with BOTH fields at once
+            // Update shared state
             await this.updateSharedFields(serial, sharedObj, {
                 target_humidity: humVal,
-                target_humidity_enabled: true
+                target_humidity_enabled: true 
             });
 
-            // Update DEVICE for immediate feedback
+            // Update device state (write to device/target_humidity/set)
             await this.updateDeviceFields(serial, deviceObj, {
                 target_humidity: humVal,
                 target_humidity_enabled: true
@@ -313,16 +319,21 @@ export class MqttIntegration extends BaseIntegration {
           }
           break;
 
-        case 'target_humidity_enabled':
         case 'humidifier_enabled': 
+        case 'target_humidity_enabled':
           const isEnabled = valueStr === 'true';
           console.log(`[MQTT:${this.userId}] Setting Humidifier Enabled: ${isEnabled}`);
           
           if (isEnabled) {
-             // If turning ON, ensure we have a valid target (default 40 if missing/invalid)
+             // User requirement: "Turning to ON will need to set default to 40%"
+             // We check if current target is invalid (-1) or missing.
              const currentTgt = sharedObj.value.target_humidity;
-             const safeTgt = (currentTgt === undefined || currentTgt < 0) ? 40 : currentTgt;
+             const isValidTarget = (currentTgt !== undefined && currentTgt >= 10 && currentTgt <= 60);
              
+             const safeTgt = isValidTarget ? currentTgt : 40;
+             
+             console.log(`[MQTT:${this.userId}] Enabling Humidifier. Target: ${safeTgt}%`);
+
              await this.updateSharedFields(serial, sharedObj, {
                  target_humidity_enabled: true,
                  target_humidity: safeTgt
@@ -332,12 +343,11 @@ export class MqttIntegration extends BaseIntegration {
                  target_humidity: safeTgt
              });
           } else {
-             // Just turning off
+             // Turn OFF
              await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', false);
              await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', false);
           }
           break;
-
         default:
           console.warn(`[MQTT:${this.userId}] Unknown HA command: ${command}`);
       }
@@ -450,23 +460,29 @@ export class MqttIntegration extends BaseIntegration {
       if (currentTemp !== undefined) await this.publish(`${prefix}/${serial}/ha/current_temperature`, String(currentTemp), { retain: true, qos: 0 });
       if (device.current_humidity !== undefined) await this.publish(`${prefix}/${serial}/ha/current_humidity`, String(device.current_humidity), { retain: true, qos: 0 });
 
-      // --- HUMIDIFIER STATE ---
+      // 1. Target Humidity (The Slider)
+      // Requirement: Check range 10-60 (ignore -1) and publish to 'device/target_humidity'
       const targetHum = device.target_humidity ?? shared.target_humidity;
-      if (targetHum !== undefined && targetHum >= 0) {
-        await this.publish(`${prefix}/${serial}/ha/target_humidity`, String(targetHum), { retain: true, qos: 0 });
+      if (targetHum !== undefined && targetHum >= 10 && targetHum <= 60) {
+        await this.publish(`${prefix}/${serial}/device/target_humidity`, String(targetHum), { retain: true, qos: 0 });
       }
 
-      const isEnabled = shared.target_humidity_enabled === true;
-      await this.publish(`${prefix}/${serial}/ha/target_humidity_enabled`, String(isEnabled), { retain: true, qos: 0 });
+      // 2. Humidifier Enabled (The Switch)
+      // Requirement: Publish to 'ha/humidifier_enabled'
+      const isEnabled = shared.target_humidity_enabled === true || device.target_humidity_enabled === true;
+      await this.publish(`${prefix}/${serial}/ha/humidifier_enabled`, String(isEnabled), { retain: true, qos: 0 });
 
+      // 3. Action Status (Text)
+      // Requirement: "states are humidifying and idle"
       const valveState = String(device.humidifier_state).toLowerCase();
-      const isValveOpen = valveState === 'true'; 
+      const isValveOpen = valveState === 'true' || valveState === 'on'; 
+      
       let humAction = 'idle';
-      if (!isEnabled) {
-        humAction = 'off';
-      } else if (isValveOpen) {
+      if (isEnabled && isValveOpen) {
         humAction = 'humidifying';
       }
+      // If disabled or valve closed, it remains 'idle'
+      
       await this.publish(`${prefix}/${serial}/ha/humidifier_action`, humAction, { retain: true, qos: 0 });
 
       if (shared.target_temperature !== undefined) await this.publish(`${prefix}/${serial}/ha/target_temperature`, String(shared.target_temperature), { retain: true, qos: 0 });
