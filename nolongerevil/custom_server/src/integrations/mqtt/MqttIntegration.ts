@@ -74,7 +74,10 @@ export class MqttIntegration extends BaseIntegration {
       await this.connectToBroker();
       await this.subscribeToCommands();
 
+      // REORDERED: Publish Initial State FIRST to populate data for discovery check
       await this.publishInitialState();
+
+      // Discovery now runs after data is loaded (checking for has_humidifier)
       await this.publishDiscoveryMessages();
 
       this.startDeviceWatching();
@@ -223,11 +226,13 @@ export class MqttIntegration extends BaseIntegration {
     try {
       const prefix = this.config.topicPrefix!;
 
+      // 1. HA Specific Logic (Now includes Humidifier)
       if (topic.includes('/ha/') && topic.endsWith('/set')) {
         await this.handleHomeAssistantCommand(topic, message);
         return;
       }
 
+      // 2. Generic Device Logic
       const parsed = parseCommandTopic(topic, prefix);
       if (!parsed) {
         console.warn(`[MQTT:${this.userId}] Invalid command topic: ${topic}`);
@@ -333,11 +338,15 @@ export class MqttIntegration extends BaseIntegration {
           }
           break;
 
+        // --- NEW HUMIDIFIER LOGIC (Standardized) ---
         case 'target_humidity':
           let humVal = parseFloat(valueStr);
+          // 1. Validation (10-60 range, ignore -1)
           if (!isNaN(humVal) && humVal >= 10 && humVal <= 60) {
+            // 2. Rounding
             humVal = Math.round(humVal / 5) * 5;
             console.log(`[MQTT:${this.userId}] Setting Humidity Target: ${humVal}%`);
+            // 3. Atomic Update (Value + Enable)
             await this.updateSharedFields(serial, sharedObj, {
                 target_humidity: humVal,
                 target_humidity_enabled: true 
@@ -349,11 +358,28 @@ export class MqttIntegration extends BaseIntegration {
           }
           break;
 
-        case 'humidifier_state':
+        case 'humidifier_enabled': 
+        case 'target_humidity_enabled':
           const isEnabled = valueStr === 'true';
-          console.log(`[MQTT:${this.userId}] Setting Humidifier Enabled (State): ${isEnabled}`);
-          await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', isEnabled);
-          await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', isEnabled);
+          console.log(`[MQTT:${this.userId}] Setting Humidifier Enabled: ${isEnabled}`);
+          if (isEnabled) {
+             // Turn ON: Default to 40% if current target is bad
+             const currentTgt = sharedObj.value.target_humidity;
+             const isValidTarget = (currentTgt !== undefined && currentTgt >= 10 && currentTgt <= 60);
+             const safeTgt = isValidTarget ? currentTgt : 40;
+             await this.updateSharedFields(serial, sharedObj, {
+                 target_humidity_enabled: true,
+                 target_humidity: safeTgt
+             });
+             await this.updateDeviceFields(serial, deviceObj, {
+                 target_humidity_enabled: true,
+                 target_humidity: safeTgt
+             });
+          } else {
+             // Turn OFF: Just disable flag
+             await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', false);
+             await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', false);
+          }
           break;
 
         default:
@@ -372,10 +398,11 @@ export class MqttIntegration extends BaseIntegration {
     const newValue = { ...currentObj.value, [field]: value };
     const newRevision = currentObj.object_revision + 1;
     await this.deviceState.upsert(serial, objectKey, newRevision, Date.now(), newValue);
-    const notifyResult = this.subscriptionManager.notify(serial, objectKey, newValue);
+    const notifyResult = this.subscriptionManager.notify(serial, objectKey, newValue); // Use newValue directly for notify logic if needed, or re-fetch
     console.log(`[MQTT:${this.userId}] Notified ${notifyResult.notified} subscriber(s) for ${serial}/${objectKey}`);
   }
 
+  // UPDATED: Now supports atomic multiple field updates
   private async updateSharedFields(serial: string, currentObj: any, fields: Record<string, any>): Promise<void> {
     const objectKey = `shared.${serial}`;
     const newValue = { ...currentObj.value, ...fields };
@@ -476,6 +503,8 @@ export class MqttIntegration extends BaseIntegration {
   private async publishHomeAssistantState(serial: string): Promise<void> {
     if (!this.client || !this.isReady) return;
     try {
+      // Note: Calling publishThermostatDiscovery here ensures that if capabilities change, discovery is updated.
+      // However, usually discovery is static. This matches original logic.
       await publishThermostatDiscovery(
         this.client,
         serial,
@@ -498,6 +527,7 @@ export class MqttIntegration extends BaseIntegration {
         await this.publish(`${prefix}/${serial}/ha/current_temperature`, String(currentTemp), { retain: true, qos: 0 });
       }
       
+      // FIX: Check shared OR device for humidity
       const currentHum = shared.current_humidity ?? device.current_humidity;
       if (currentHum !== undefined) {
         await this.publish(`${prefix}/${serial}/ha/current_humidity`, String(currentHum), { retain: true, qos: 0 });
@@ -509,8 +539,10 @@ export class MqttIntegration extends BaseIntegration {
         await this.publish(`${prefix}/${serial}/device/target_humidity`, String(targetHum), { retain: true, qos: 0 });
       }
 
-      const isEnabled = shared.target_humidity_enabled === true || device.target_humidity_enabled === true;
-      await this.publish(`${prefix}/${serial}/ha/humidifier_state`, String(isEnabled), { retain: true, qos: 0 });
+      const rawEnabled = shared.target_humidity_enabled === true || device.target_humidity_enabled === true;
+      const isTargetOff = targetHum === -1; 
+      const isEnabled = rawEnabled && !isTargetOff;
+      await this.publish(`${prefix}/${serial}/ha/humidifier_enabled`, String(isEnabled), { retain: true, qos: 0 });
 
       const valveState = String(device.humidifier_state).toLowerCase();
       const isValveOpen = valveState === 'true' || valveState === 'on'; 
