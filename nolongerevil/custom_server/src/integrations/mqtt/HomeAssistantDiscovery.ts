@@ -243,9 +243,8 @@ export async function publishThermostatDiscovery(
     let hasHumidifier = false;
     
     // --- HUMIDIFIER DETECTION LOGIC ---
-    // If the device reports ANY state for the humidifier (true or false),
-    // it implies the hardware is present and sending data.
-    // false = "Idle", true = "Humidifying"
+    // User requested check: existence of humidifier_state.
+    // If this key exists (even if false/idle), the device has a humidifier.
     if (val?.humidifier_state !== undefined && val?.humidifier_state !== null) {
         hasHumidifier = true;
         console.log(`[HA Discovery] Humidifier detected via active state: ${val.humidifier_state}`);
