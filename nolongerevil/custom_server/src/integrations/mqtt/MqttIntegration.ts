@@ -79,8 +79,7 @@ export class MqttIntegration extends BaseIntegration {
 
       await this.subscribeToCommands();
 
-      // NEW: Wait for the initial state (get-status response) to populate in DB
-      // This ensures we have capabilities (has_humidifier) before running discovery
+      // NEW: Wait for the initial state flood to settle so capabilities (has_humidifier) are loaded
       await this.waitForInitialState();
 
       await this.publishInitialState();
@@ -103,26 +102,25 @@ export class MqttIntegration extends BaseIntegration {
   private async waitForInitialState(): Promise<void> {
     if (this.userDeviceSerials.size === 0) return;
 
-    console.log(`[MQTT:${this.userId}] Waiting for initial device state...`);
-    const maxRetries = 10;
-    const delayMs = 2000;
+    console.log(`[MQTT:${this.userId}] Waiting for initial device state to settle...`);
+    const maxRetries = 20; // 10 seconds total
+    const pollInterval = 500;
 
     for (const serial of this.userDeviceSerials) {
       let retries = 0;
       while (retries < maxRetries) {
-        // Check for the main device object which contains capabilities
         const deviceObj = await this.deviceState.get(serial, `device.${serial}`);
-        if (deviceObj) {
+        
+        // Wait until we have a robust object (>5 keys) to ensure the MQTT retained flood has arrived
+        if (deviceObj && deviceObj.value && Object.keys(deviceObj.value).length > 5) {
+          // Add a small 2s buffer to ensure the very last message (which might be capabilities) is processed
+          await new Promise(resolve => setTimeout(resolve, 2000));
           break; 
         }
         
-        if (retries === 0) console.log(`[MQTT:${this.userId}] Waiting for data for ${serial}...`);
-        await new Promise(resolve => setTimeout(resolve, delayMs));
+        if (retries % 4 === 0) console.log(`[MQTT:${this.userId}] Waiting for data load for ${serial}...`);
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
         retries++;
-      }
-      
-      if (retries === maxRetries) {
-         console.warn(`[MQTT:${this.userId}] Timed out waiting for initial state for ${serial} - Discovery might be incomplete`);
       }
     }
   }
