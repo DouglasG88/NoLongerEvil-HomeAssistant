@@ -243,23 +243,20 @@ export async function publishThermostatDiscovery(
     let hasHumidifier = false;
     
     // --- HUMIDIFIER DETECTION LOGIC ---
-    // Check 1: Explicit 'humidifier_state' is strictly 'idle' or 'humidifying'
-    const humState = String(val?.humidifier_state || '').toLowerCase();
-    if (humState === 'idle' || humState === 'humidifying') {
+    // If the device reports ANY state for the humidifier (true or false),
+    // it implies the hardware is present and sending data.
+    // false = "Idle", true = "Humidifying"
+    if (val?.humidifier_state !== undefined && val?.humidifier_state !== null) {
         hasHumidifier = true;
-        console.log(`[HA Discovery] Humidifier detected via state: ${humState}`);
+        console.log(`[HA Discovery] Humidifier detected via active state: ${val.humidifier_state}`);
     }
-    // Check 2: Explicit 'has_humidifier' flag (boolean or string)
+    // Fallback 1: Explicit capability flag
     else if (val?.has_humidifier === true || val?.has_humidifier === 'true' || 
              sharedVal?.has_humidifier === true || sharedVal?.has_humidifier === 'true') {
         hasHumidifier = true;
     }
-    // Check 3: Wiring check (Star terminal configured as 'hum')
+    // Fallback 2: Wiring configuration
     else if (val?.star_type === 'hum' || val?.pin_star_description === 'hum') {
-        hasHumidifier = true;
-    }
-    // Check 4: Type check
-    else if (val?.humidifier_type && val?.humidifier_type !== 'none' && val?.humidifier_type !== 'unknown') {
         hasHumidifier = true;
     }
 
