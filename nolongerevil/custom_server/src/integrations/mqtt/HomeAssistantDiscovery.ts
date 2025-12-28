@@ -236,28 +236,13 @@ export async function publishThermostatDiscovery(
 
     // 1. Fetch Device Data for Capabilities Check
     const deviceObj = await deviceState.get(serial, `device.${serial}`);
-    const sharedObj = await deviceState.get(serial, `shared.${serial}`);
-
-    const val = deviceObj?.value;
-    const sharedVal = sharedObj?.value;
-    let hasHumidifier = false;
     
-    // --- HUMIDIFIER DETECTION LOGIC ---
-    // User requested check: existence of humidifier_state.
-    // If this key exists (even if false/idle), the device has a humidifier.
-    if (val?.humidifier_state !== undefined && val?.humidifier_state !== null) {
-        hasHumidifier = true;
-        console.log(`[HA Discovery] Humidifier detected via active state: ${val.humidifier_state}`);
-    }
-    // Fallback 1: Explicit capability flag
-    else if (val?.has_humidifier === true || val?.has_humidifier === 'true' || 
-             sharedVal?.has_humidifier === true || sharedVal?.has_humidifier === 'true') {
-        hasHumidifier = true;
-    }
-    // Fallback 2: Wiring configuration
-    else if (val?.star_type === 'hum' || val?.pin_star_description === 'hum') {
-        hasHumidifier = true;
-    }
+    // --- HUMIDIFIER DETECTION LOGIC (SIMPLIFIED) ---
+    // User Requirement: "only check if humidifier_state exists"
+    // We check if the key exists in the object (not undefined).
+    // It can be false (idle), true (humidifying), or any other value.
+    const val = deviceObj?.value;
+    const hasHumidifier = val?.humidifier_state !== undefined;
 
     console.log(`[HA Discovery] Publishing discovery for ${serial} (${deviceName}). Humidifier: ${hasHumidifier}`);
 
