@@ -75,7 +75,7 @@ export class MqttIntegration extends BaseIntegration {
       await this.subscribeToCommands();
 
       // NEW: Critical fix for race condition. 
-      // Waits for backend to fetch 'has_humidifier' before running discovery.
+      // Waits for backend to fetch device data before running discovery.
       await this.waitForInitialState();
 
       await this.publishInitialState();
@@ -90,22 +90,21 @@ export class MqttIntegration extends BaseIntegration {
     }
   }
 
-  // NEW: Helper to wait for data flood
+  // NEW: Helper to wait for data flood to prevent "Humidifier: false" false negatives
   private async waitForInitialState(): Promise<void> {
     if (this.userDeviceSerials.size === 0) return;
 
     console.log(`[MQTT:${this.userId}] Waiting for initial device state to settle...`);
-    // Wait up to 10 seconds (20 * 500ms)
-    const maxRetries = 20; 
+    const maxRetries = 20; // Wait up to 10 seconds
     
     for (const serial of this.userDeviceSerials) {
       let retries = 0;
       while (retries < maxRetries) {
         const deviceObj = await this.deviceState.get(serial, `device.${serial}`);
         
-        // We check if the object has >5 keys to ensure it's a "full" update, not just a partial one
+        // Check if we have a robust object (>5 keys) to ensure the MQTT retained flood has arrived
         if (deviceObj && deviceObj.value && Object.keys(deviceObj.value).length > 5) {
-          // Add a small 2s buffer to ensure the 'has_humidifier' field (which comes late) is processed
+          // Add a small 2s buffer to ensure the very last message (capabilities) is processed
           await new Promise(resolve => setTimeout(resolve, 2000));
           break; 
         }
