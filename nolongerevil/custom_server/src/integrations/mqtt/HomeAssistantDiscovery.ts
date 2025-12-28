@@ -118,7 +118,7 @@ export function buildHumidifierDiscovery(
 ): any {
   return {
     unique_id: `nolongerevil_${serial}_humidifier`,
-    name: `${deviceName} Humidifier`,
+    name: `${deviceName} Humidifier Status`,
     default_entity_id: `humidifier.nest_${serial}_humidifier`,
     device: {
       identifiers: [`nolongerevil_${serial}`],
