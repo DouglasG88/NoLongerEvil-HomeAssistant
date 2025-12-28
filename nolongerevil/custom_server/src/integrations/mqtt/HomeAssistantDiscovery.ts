@@ -355,13 +355,22 @@ export async function publishThermostatDiscovery(
     // Resolve device name
     const deviceName = await resolveDeviceName(serial, deviceState);
 
-    console.log(`[HA Discovery] Publishing discovery for ${serial} (${deviceName})`);
-    
     // 1. Fetch Device Data for Capabilities Check
-    // We check if the device actually has a humidifier before creating the entity
     const deviceObj = await deviceState.get(serial, `device.${serial}`);
-    const hasHumidifier = deviceObj?.value?.has_humidifier === true;
+    const sharedObj = await deviceState.get(serial, `shared.${serial}`);
 
+    // Check capability: support both boolean and string "true"
+    // Also check both device and shared objects to be safe
+    let hasHumidifier = false;
+    
+    if (deviceObj?.value?.has_humidifier === true || deviceObj?.value?.has_humidifier === 'true') {
+        hasHumidifier = true;
+    } else if (sharedObj?.value?.has_humidifier === true || sharedObj?.value?.has_humidifier === 'true') {
+        hasHumidifier = true;
+    }
+
+    console.log(`[HA Discovery] Publishing discovery for ${serial} (${deviceName}). Humidifier: ${hasHumidifier}`);
+    
     // Climate entity (main thermostat control)
     // Always uses Celsius - HA handles user display preferences
     const climateConfig = buildClimateDiscovery(serial, deviceName, topicPrefix);
