@@ -129,20 +129,20 @@ export function buildHumidifierDiscovery(
       payload_available: 'online',
       payload_not_available: 'offline',
     },
-    // 1. Switch (On/Off) - UPDATED to match MqttIntegration.ts
-    command_topic: `${topicPrefix}/${serial}/ha/humidifier_enabled/set`,
-    state_topic: `${topicPrefix}/${serial}/ha/humidifier_enabled`,
+    // 1. Switch (On/Off) - Direct to /ha/ topic
+    command_topic: `${topicPrefix}/${serial}/ha/humidifier_state/set`,
+    state_topic: `${topicPrefix}/${serial}/ha/humidifier_state`,
     payload_on: 'true',
     payload_off: 'false',
     
-    // 2. Slider (Target)
+    // 2. Slider (Target) - Direct to /ha/ topic
     target_humidity_command_topic: `${topicPrefix}/${serial}/ha/target_humidity/set`,
     target_humidity_state_topic: `${topicPrefix}/${serial}/device/target_humidity`,
     min_humidity: 10,
     max_humidity: 60,
     
-    // 3. Status - Note: MQTT Humidifier doesn't use action_topic for display natively
-    // We keep this for reference, but use a separate sensor for display
+    // 3. Status
+    action_topic: `${topicPrefix}/${serial}/ha/humidifier_action`,
     current_humidity_topic: `${topicPrefix}/${serial}/ha/current_humidity`,
     
     device_class: 'humidifier',
