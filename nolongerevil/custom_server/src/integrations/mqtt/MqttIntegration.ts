@@ -45,11 +45,6 @@ export class MqttIntegration extends BaseIntegration {
   private isReady: boolean = false;
   private deviceWatchInterval: NodeJS.Timeout | null = null;
 
-  // NEW: Track setup start times (Serial -> Timestamp)
-  private setupMonitoring = new Map<string, number>();
-  // NEW: 1 Hour Timeout in Milliseconds
-  private readonly SETUP_TIMEOUT_MS = 60 * 60 * 1000;
-
   constructor(
     userId: string,
     config: MqttConfig,
@@ -97,17 +92,6 @@ export class MqttIntegration extends BaseIntegration {
     } catch (error) {
       console.error(`[MQTT:${this.userId}] Failed to initialize:`, error);
       throw error;
-    }
-  }
-
-  /**
-   * NEW: Call this method when the pairing code is successfully entered.
-   * This starts the 1-hour monitoring window for this specific device.
-   */
-  public startHumidifierSetup(serial: string): void {
-    if (!this.setupMonitoring.has(serial)) {
-      this.setupMonitoring.set(serial, Date.now());
-      console.log(`[MQTT:${this.userId}] Starting 1-hour humidifier setup monitoring for ${serial}`);
     }
   }
 
@@ -170,6 +154,10 @@ export class MqttIntegration extends BaseIntegration {
               );
               await this.publishHomeAssistantState(serial);
               await this.publishAvailability(serial, 'online');
+
+              // NEW: Start background loop to watch for humidifier capability
+              this.startHumidifierDiscoveryLoop(serial);
+
             } catch (error) {
               console.error(`[MQTT:${this.userId}] Failed to publish discovery for new device ${serial}:`, error);
             }
@@ -182,13 +170,69 @@ export class MqttIntegration extends BaseIntegration {
   }
 
   /**
+   * Start a background loop to watch for humidifier capability
+   * Runs for up to 1 hour after device discovery
+   * Checks every 60 seconds
+   */
+  private startHumidifierDiscoveryLoop(serial: string): void {
+    console.log(`[MQTT:${this.userId}] Starting background humidifier check for ${serial} (1 hour timeout)`);
+
+    const startTime = Date.now();
+    const ONE_HOUR_MS = 60 * 60 * 1000;
+    const CHECK_INTERVAL_MS = 60 * 1000;
+
+    const checkLoop = async () => {
+      // Loop until 1 hour has passed
+      while (Date.now() - startTime < ONE_HOUR_MS) {
+        try {
+          // Check if device has reported humidifier capability
+          const deviceObj = await this.deviceState.get(serial, `device.${serial}`);
+          
+          // Use optional chaining carefully; deviceObj might be null
+          const hasHumidifier = deviceObj?.value?.has_humidifier === true;
+
+          if (hasHumidifier) {
+            console.log(`[MQTT:${this.userId}] Humidifier detected for ${serial} during background check! Updating discovery...`);
+            
+            if (this.client && this.config.homeAssistantDiscovery) {
+              // Re-run discovery (will now include humidifier config)
+              await publishThermostatDiscovery(
+                this.client,
+                serial,
+                this.deviceState,
+                this.config.topicPrefix!,
+                this.config.discoveryPrefix!
+              );
+              // Force state update to populate new entity
+              await this.publishHomeAssistantState(serial);
+            }
+            // Exit loop immediately after finding it
+            return;
+          }
+
+          // Wait 60 seconds before next check
+          await new Promise(resolve => setTimeout(resolve, CHECK_INTERVAL_MS));
+
+        } catch (error) {
+          console.error(`[MQTT:${this.userId}] Error in humidifier background check for ${serial}:`, error);
+          // Wait and retry instead of crashing loop
+          await new Promise(resolve => setTimeout(resolve, CHECK_INTERVAL_MS));
+        }
+      }
+
+      console.log(`[MQTT:${this.userId}] Humidifier background check timed out for ${serial}`);
+    };
+
+    // Trigger the async loop without awaiting it (fire and forget)
+    checkLoop();
+  }
+
+  /**
    * Handle device removal - clean up HA discovery
    */
   private async handleDeviceRemoved(serial: string): Promise<void> {
     // Remove from local tracking
     this.userDeviceSerials.delete(serial);
-    // Remove from setup monitoring if active
-    this.setupMonitoring.delete(serial);
 
     // Mark device as offline
     await this.publishAvailability(serial, 'offline');
@@ -758,42 +802,6 @@ export class MqttIntegration extends BaseIntegration {
       const isValveOpen = valveState === 'true' || valveState === 'on';
       let humAction = 'idle';
       if (isEnabled && isValveOpen) humAction = 'humidifying';
-      
-      // =================================================================================
-      // NEW: Setup Wait Loop Logic
-      // Checks if we are in the setup phase and if valid action is seen
-      // =================================================================================
-      if (this.setupMonitoring.has(serial)) {
-        const startTime = this.setupMonitoring.get(serial)!;
-        
-        // 1. Check if 1 Hour has passed (Timeout)
-        if (Date.now() - startTime > this.SETUP_TIMEOUT_MS) {
-          console.log(`[MQTT:${this.userId}] Setup Timeout: 1 hour passed for ${serial}. Stopping humidifier monitor.`);
-          this.setupMonitoring.delete(serial);
-        }
-        // 2. Check if Action is 'idle' or 'humidifying'
-        // We MUST ensure device.humidifier_state is not undefined to avoid false positives from defaults
-        else if (device.humidifier_state !== undefined && (humAction === 'idle' || humAction === 'humidifying')) {
-          console.log(`[MQTT:${this.userId}] Setup Success: Humidifier action '${humAction}' detected for ${serial}!`);
-          
-          // A. Persist 'has_humidifier' to database so it survives restarts
-          await this.updateDeviceValue(serial, deviceObj, 'has_humidifier', true);
-          
-          // B. Exit the loop (stop monitoring)
-          this.setupMonitoring.delete(serial);
-
-          // C. Force immediate Discovery Update so the Humidifier entity appears in Home Assistant
-          await publishThermostatDiscovery(
-            this.client,
-            serial,
-            this.deviceState,
-            this.config.topicPrefix!,
-            this.config.discoveryPrefix!
-          );
-        }
-      }
-      // =================================================================================
-      
       await this.publish(`${prefix}/${serial}/ha/humidifier_action`, humAction, { retain: true, qos: 0 });
 
       const haMode = nestModeToHA(shared.target_temperature_type);
