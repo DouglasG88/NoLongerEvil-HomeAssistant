@@ -3,12 +3,6 @@
  *
  * Publishes discovery messages for automatic device detection in Home Assistant
  * Reference: https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery
- *
- * Discovery Topic Format:
- * <discovery_prefix>/<component>/[<node_id>/]<object_id>/config
- *
- * Example:
- * homeassistant/climate/nest_02AA01AC/thermostat/config
  */
 
 import * as mqtt from 'mqtt';
@@ -16,26 +10,17 @@ import type { DeviceStateService } from '../../services/DeviceStateService';
 import { resolveDeviceName } from './helpers';
 
 /**
- * Build Home Assistant discovery payload for climate entity (main thermostat control)
+ * Build Home Assistant discovery payload for climate entity
  */
 export function buildClimateDiscovery(
   serial: string,
   deviceName: string,
   topicPrefix: string
 ): any {
-  // Always use Celsius - HA handles display conversion based on user preferences
-  // This avoids double-conversion bugs when Nest display unit changes
   return {
-    // Unique identifier
     unique_id: `nolongerevil_${serial}`,
-
-    // Device name
     name: deviceName,
-
-    // NEW: Updated from object_id to default_entity_id to fix HA Core 2026 deprecation warnings
-    default_entity_id: `climate.nest_${serial}`,
-
-    // Device info (groups all entities together)
+    default_entity_id: `climate.nest_${serial}`, // Updated from object_id
     device: {
       identifiers: [`nolongerevil_${serial}`],
       name: deviceName,
@@ -43,73 +28,41 @@ export function buildClimateDiscovery(
       manufacturer: 'Google Nest',
       sw_version: 'NoLongerEvil',
     },
-
-    // Availability topic
     availability: {
       topic: `${topicPrefix}/${serial}/availability`,
       payload_available: 'online',
       payload_not_available: 'offline',
     },
-
-    // Temperature unit - always Celsius (Nest internal format)
-    // HA will convert to user's display preference automatically
     temperature_unit: 'C',
-
-    // Precision (0.5 for Nest)
     precision: 0.5,
     temp_step: 0.5,
-
-    // Current temperature
     current_temperature_topic: `${topicPrefix}/${serial}/ha/current_temperature`,
-
-    // Current humidity
     current_humidity_topic: `${topicPrefix}/${serial}/ha/current_humidity`,
-
-    // Target temperature (heat/cool mode)
     temperature_command_topic: `${topicPrefix}/${serial}/ha/target_temperature/set`,
     temperature_state_topic: `${topicPrefix}/${serial}/ha/target_temperature`,
-
-    // Target temperature high (auto mode)
     temperature_high_command_topic: `${topicPrefix}/${serial}/ha/target_temperature_high/set`,
     temperature_high_state_topic: `${topicPrefix}/${serial}/ha/target_temperature_high`,
-
-    // Target temperature low (auto mode)
     temperature_low_command_topic: `${topicPrefix}/${serial}/ha/target_temperature_low/set`,
     temperature_low_state_topic: `${topicPrefix}/${serial}/ha/target_temperature_low`,
-
-    // HVAC mode (heat, cool, heat_cool, off)
     mode_command_topic: `${topicPrefix}/${serial}/ha/mode/set`,
     mode_state_topic: `${topicPrefix}/${serial}/ha/mode`,
     modes: ['off', 'heat', 'cool', 'heat_cool'],
-
-    // HVAC action (heating, cooling, idle, fan, off)
     action_topic: `${topicPrefix}/${serial}/ha/action`,
-
-    // Fan mode (on, auto)
     fan_mode_command_topic: `${topicPrefix}/${serial}/ha/fan_mode/set`,
     fan_mode_state_topic: `${topicPrefix}/${serial}/ha/fan_mode`,
     fan_modes: ['auto', 'on'],
-
-    // Preset modes (home, away, eco)
     preset_mode_command_topic: `${topicPrefix}/${serial}/ha/preset/set`,
     preset_mode_state_topic: `${topicPrefix}/${serial}/ha/preset`,
     preset_modes: ['home', 'away', 'eco'],
-
-    // Min/max temperature in Celsius (typical Nest range)
     min_temp: 9,
     max_temp: 32,
-
-    // Optimistic mode
     optimistic: false,
-
-    // QoS
     qos: 1,
   };
 }
 
 /**
  * Build Home Assistant discovery payload for Humidifier
- * NEW: Added for Nest Humidifier support
  */
 export function buildHumidifierDiscovery(
   serial: string,
@@ -129,13 +82,13 @@ export function buildHumidifierDiscovery(
       payload_available: 'online',
       payload_not_available: 'offline',
     },
-    // 1. Switch (On/Off) - Direct to /ha/ topic
+    // 1. Switch (On/Off)
     command_topic: `${topicPrefix}/${serial}/ha/humidifier_state/set`,
     state_topic: `${topicPrefix}/${serial}/ha/humidifier_state`,
     payload_on: 'true',
     payload_off: 'false',
     
-    // 2. Slider (Target) - Direct to /ha/ topic
+    // 2. Slider (Target)
     target_humidity_command_topic: `${topicPrefix}/${serial}/ha/target_humidity/set`,
     target_humidity_state_topic: `${topicPrefix}/${serial}/device/target_humidity`,
     min_humidity: 10,
@@ -154,189 +107,116 @@ export function buildHumidifierDiscovery(
   };
 }
 
-/**
- * Build Home Assistant discovery payload for temperature sensor
- */
-export function buildTemperatureSensorDiscovery(
-  serial: string,
-  topicPrefix: string
-): any {
+export function buildTemperatureSensorDiscovery(serial: string, topicPrefix: string): any {
   return {
     unique_id: `nolongerevil_${serial}_temperature`,
     name: `Temperature`,
     default_entity_id: `sensor.nest_${serial}_temperature`,
-
-    device: {
-      identifiers: [`nolongerevil_${serial}`],
-    },
-
+    device: { identifiers: [`nolongerevil_${serial}`] },
     state_topic: `${topicPrefix}/${serial}/ha/current_temperature`,
     unit_of_measurement: '°C',
     device_class: 'temperature',
     state_class: 'measurement',
-
     availability: {
       topic: `${topicPrefix}/${serial}/availability`,
       payload_available: 'online',
       payload_not_available: 'offline',
     },
-
     qos: 0,
   };
 }
 
-/**
- * Build Home Assistant discovery payload for humidity sensor
- */
-export function buildHumiditySensorDiscovery(
-  serial: string,
-  topicPrefix: string
-): any {
+export function buildHumiditySensorDiscovery(serial: string, topicPrefix: string): any {
   return {
     unique_id: `nolongerevil_${serial}_humidity`,
     name: `Humidity`,
     default_entity_id: `sensor.nest_${serial}_humidity`,
-
-    device: {
-      identifiers: [`nolongerevil_${serial}`],
-    },
-
+    device: { identifiers: [`nolongerevil_${serial}`] },
     state_topic: `${topicPrefix}/${serial}/ha/current_humidity`,
     unit_of_measurement: '%',
     device_class: 'humidity',
     state_class: 'measurement',
-
     availability: {
       topic: `${topicPrefix}/${serial}/availability`,
       payload_available: 'online',
       payload_not_available: 'offline',
     },
-
     qos: 0,
   };
 }
 
-/**
- * Build Home Assistant discovery payload for outdoor temperature sensor
- */
-export function buildOutdoorTemperatureSensorDiscovery(
-  serial: string,
-  topicPrefix: string
-): any {
+export function buildOutdoorTemperatureSensorDiscovery(serial: string, topicPrefix: string): any {
   return {
     unique_id: `nolongerevil_${serial}_outdoor_temperature`,
     name: `Outdoor Temperature`,
     default_entity_id: `sensor.nest_${serial}_outdoor_temperature`,
-
-    device: {
-      identifiers: [`nolongerevil_${serial}`],
-    },
-
+    device: { identifiers: [`nolongerevil_${serial}`] },
     state_topic: `${topicPrefix}/${serial}/ha/outdoor_temperature`,
     unit_of_measurement: '°C',
     device_class: 'temperature',
     state_class: 'measurement',
-
     availability: {
       topic: `${topicPrefix}/${serial}/availability`,
       payload_available: 'online',
       payload_not_available: 'offline',
     },
-
     qos: 0,
   };
 }
 
-/**
- * Build Home Assistant discovery payload for occupancy binary sensor
- */
-export function buildOccupancyBinarySensorDiscovery(
-  serial: string,
-  topicPrefix: string
-): any {
+export function buildOccupancyBinarySensorDiscovery(serial: string, topicPrefix: string): any {
   return {
     unique_id: `nolongerevil_${serial}_occupancy`,
     name: `Occupancy`,
     default_entity_id: `binary_sensor.nest_${serial}_occupancy`,
-
-    device: {
-      identifiers: [`nolongerevil_${serial}`],
-    },
-
+    device: { identifiers: [`nolongerevil_${serial}`] },
     state_topic: `${topicPrefix}/${serial}/ha/occupancy`,
     payload_on: 'home',
     payload_off: 'away',
     device_class: 'occupancy',
-
     availability: {
       topic: `${topicPrefix}/${serial}/availability`,
       payload_available: 'online',
       payload_not_available: 'offline',
     },
-
     qos: 0,
   };
 }
 
-
-/**
- * Build Home Assistant discovery payload for fan binary sensor
- */
-export function buildFanBinarySensorDiscovery(
-  serial: string,
-  topicPrefix: string
-): any {
+export function buildFanBinarySensorDiscovery(serial: string, topicPrefix: string): any {
   return {
     unique_id: `nolongerevil_${serial}_fan`,
     name: `Fan`,
     default_entity_id: `binary_sensor.nest_${serial}_fan`,
-
-    device: {
-      identifiers: [`nolongerevil_${serial}`],
-    },
-
+    device: { identifiers: [`nolongerevil_${serial}`] },
     state_topic: `${topicPrefix}/${serial}/ha/fan_running`,
     payload_on: 'true',
     payload_off: 'false',
     device_class: 'running',
-
     availability: {
       topic: `${topicPrefix}/${serial}/availability`,
       payload_available: 'online',
       payload_not_available: 'offline',
     },
-
     qos: 0,
   };
 }
 
-/**
- * Build Home Assistant discovery payload for leaf (eco) binary sensor
- */
-export function buildLeafBinarySensorDiscovery(
-  serial: string,
-  topicPrefix: string
-): any {
+export function buildLeafBinarySensorDiscovery(serial: string, topicPrefix: string): any {
   return {
     unique_id: `nolongerevil_${serial}_leaf`,
     name: `Eco Mode`,
     default_entity_id: `binary_sensor.nest_${serial}_leaf`,
-
-    device: {
-      identifiers: [`nolongerevil_${serial}`],
-    },
-
+    device: { identifiers: [`nolongerevil_${serial}`] },
     state_topic: `${topicPrefix}/${serial}/ha/eco`,
     payload_on: 'true',
     payload_off: 'false',
     device_class: 'power',
-
     availability: {
       topic: `${topicPrefix}/${serial}/availability`,
       payload_available: 'online',
       payload_not_available: 'offline',
     },
-
     qos: 0,
   };
 }
@@ -352,91 +232,48 @@ export async function publishThermostatDiscovery(
   discoveryPrefix: string
 ): Promise<void> {
   try {
-    // Resolve device name
     const deviceName = await resolveDeviceName(serial, deviceState);
 
     // 1. Fetch Device Data for Capabilities Check
     const deviceObj = await deviceState.get(serial, `device.${serial}`);
     const sharedObj = await deviceState.get(serial, `shared.${serial}`);
 
-    // Check capability: support both boolean and string "true"
-    // Also check both device and shared objects to be safe
+    // Check capability using Multiple Sources (Fail-safe)
+    const val = deviceObj?.value;
+    const sharedVal = sharedObj?.value;
     let hasHumidifier = false;
     
-    if (deviceObj?.value?.has_humidifier === true || deviceObj?.value?.has_humidifier === 'true') {
+    // Check 1: Explicit flag (boolean or string) in device
+    if (val?.has_humidifier === true || val?.has_humidifier === 'true') {
         hasHumidifier = true;
-    } else if (sharedObj?.value?.has_humidifier === true || sharedObj?.value?.has_humidifier === 'true') {
+    } 
+    // Check 2: Explicit flag in shared
+    else if (sharedVal?.has_humidifier === true || sharedVal?.has_humidifier === 'true') {
+        hasHumidifier = true;
+    }
+    // Check 3: Wiring check (Star terminal configured as 'hum')
+    // This is the most reliable check if the boolean flag is missing
+    else if (val?.star_type === 'hum' || val?.pin_star_description === 'hum') {
         hasHumidifier = true;
     }
 
     console.log(`[HA Discovery] Publishing discovery for ${serial} (${deviceName}). Humidifier: ${hasHumidifier}`);
-    
-    // Climate entity (main thermostat control)
-    // Always uses Celsius - HA handles user display preferences
-    const climateConfig = buildClimateDiscovery(serial, deviceName, topicPrefix);
-    await publishDiscoveryMessage(
-      client,
-      `${discoveryPrefix}/climate/nest_${serial}/thermostat/config`,
-      climateConfig
-    );
 
-    // Humidifier (Conditional)
+    // 2. Publish Climate (Always)
+    await publishDiscoveryMessage(client, `${discoveryPrefix}/climate/nest_${serial}/thermostat/config`, buildClimateDiscovery(serial, deviceName, topicPrefix));
+
+    // 3. Publish Humidifier (Conditional)
     if (hasHumidifier) {
-      const humConfig = buildHumidifierDiscovery(serial, deviceName, topicPrefix);
-      await publishDiscoveryMessage(
-        client,
-        `${discoveryPrefix}/humidifier/nest_${serial}/humidifier/config`,
-        humConfig
-      );
+      await publishDiscoveryMessage(client, `${discoveryPrefix}/humidifier/nest_${serial}/humidifier/config`, buildHumidifierDiscovery(serial, deviceName, topicPrefix));
     }
 
-    // Temperature sensor
-    const tempConfig = buildTemperatureSensorDiscovery(serial, topicPrefix);
-    await publishDiscoveryMessage(
-      client,
-      `${discoveryPrefix}/sensor/nest_${serial}/temperature/config`,
-      tempConfig
-    );
-
-    // Humidity sensor
-    const humidityConfig = buildHumiditySensorDiscovery(serial, topicPrefix);
-    await publishDiscoveryMessage(
-      client,
-      `${discoveryPrefix}/sensor/nest_${serial}/humidity/config`,
-      humidityConfig
-    );
-
-    // Outdoor temperature sensor
-    const outdoorTempConfig = buildOutdoorTemperatureSensorDiscovery(serial, topicPrefix);
-    await publishDiscoveryMessage(
-      client,
-      `${discoveryPrefix}/sensor/nest_${serial}/outdoor_temperature/config`,
-      outdoorTempConfig
-    );
-
-    // Occupancy binary sensor
-    const occupancyConfig = buildOccupancyBinarySensorDiscovery(serial, topicPrefix);
-    await publishDiscoveryMessage(
-      client,
-      `${discoveryPrefix}/binary_sensor/nest_${serial}/occupancy/config`,
-      occupancyConfig
-    );
-
-    // Fan binary sensor
-    const fanConfig = buildFanBinarySensorDiscovery(serial, topicPrefix);
-    await publishDiscoveryMessage(
-      client,
-      `${discoveryPrefix}/binary_sensor/nest_${serial}/fan/config`,
-      fanConfig
-    );
-
-    // Leaf (eco) binary sensor
-    const leafConfig = buildLeafBinarySensorDiscovery(serial, topicPrefix);
-    await publishDiscoveryMessage(
-      client,
-      `${discoveryPrefix}/binary_sensor/nest_${serial}/leaf/config`,
-      leafConfig
-    );
+    // 4. Publish Sensors
+    await publishDiscoveryMessage(client, `${discoveryPrefix}/sensor/nest_${serial}/temperature/config`, buildTemperatureSensorDiscovery(serial, topicPrefix));
+    await publishDiscoveryMessage(client, `${discoveryPrefix}/sensor/nest_${serial}/humidity/config`, buildHumiditySensorDiscovery(serial, topicPrefix));
+    await publishDiscoveryMessage(client, `${discoveryPrefix}/sensor/nest_${serial}/outdoor_temperature/config`, buildOutdoorTemperatureSensorDiscovery(serial, topicPrefix));
+    await publishDiscoveryMessage(client, `${discoveryPrefix}/binary_sensor/nest_${serial}/occupancy/config`, buildOccupancyBinarySensorDiscovery(serial, topicPrefix));
+    await publishDiscoveryMessage(client, `${discoveryPrefix}/binary_sensor/nest_${serial}/fan/config`, buildFanBinarySensorDiscovery(serial, topicPrefix));
+    await publishDiscoveryMessage(client, `${discoveryPrefix}/binary_sensor/nest_${serial}/leaf/config`, buildLeafBinarySensorDiscovery(serial, topicPrefix));
 
     console.log(`[HA Discovery] Successfully published all discovery messages for ${serial}`);
   } catch (error) {
@@ -445,14 +282,7 @@ export async function publishThermostatDiscovery(
   }
 }
 
-/**
- * Publish a single discovery message (with error handling)
- */
-async function publishDiscoveryMessage(
-  client: mqtt.MqttClient,
-  topic: string,
-  config: any
-): Promise<void> {
+async function publishDiscoveryMessage(client: mqtt.MqttClient, topic: string, config: any): Promise<void> {
   return new Promise((resolve, reject) => {
     const payload = typeof config === 'string' ? config : JSON.stringify(config);
     client.publish(topic, payload, { retain: true, qos: 1 }, (err) => {
@@ -466,17 +296,10 @@ async function publishDiscoveryMessage(
   });
 }
 
-/**
- * Remove discovery messages for a device (when device is removed)
- */
-export async function removeDeviceDiscovery(
-  client: mqtt.MqttClient,
-  serial: string,
-  discoveryPrefix: string
-): Promise<void> {
+export async function removeDeviceDiscovery(client: mqtt.MqttClient, serial: string, discoveryPrefix: string): Promise<void> {
   const topics = [
     `${discoveryPrefix}/climate/nest_${serial}/thermostat/config`,
-    `${discoveryPrefix}/humidifier/nest_${serial}/humidifier/config`, // Added Humidifier
+    `${discoveryPrefix}/humidifier/nest_${serial}/humidifier/config`, // Added
     `${discoveryPrefix}/sensor/nest_${serial}/temperature/config`,
     `${discoveryPrefix}/sensor/nest_${serial}/humidity/config`,
     `${discoveryPrefix}/sensor/nest_${serial}/outdoor_temperature/config`,
@@ -484,11 +307,8 @@ export async function removeDeviceDiscovery(
     `${discoveryPrefix}/binary_sensor/nest_${serial}/fan/config`,
     `${discoveryPrefix}/binary_sensor/nest_${serial}/leaf/config`,
   ];
-
-  // Publish empty payloads to remove entities
   for (const topic of topics) {
     await publishDiscoveryMessage(client, topic, '');
   }
-
   console.log(`[HA Discovery] Removed all discovery messages for ${serial}`);
 }
