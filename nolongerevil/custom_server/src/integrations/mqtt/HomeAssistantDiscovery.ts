@@ -243,10 +243,9 @@ export async function publishThermostatDiscovery(
     let hasHumidifier = false;
     
     // --- HUMIDIFIER DETECTION LOGIC ---
-    
-    // Check 1: Explicit 'humidifier_state' as 'idle' or 'humidifying' (Per User Request)
+    // Check 1: Explicit 'humidifier_state' is strictly 'idle' or 'humidifying'
     const humState = String(val?.humidifier_state || '').toLowerCase();
-    if (humState === 'idle' || humState === 'humidifying' || humState === 'true' || humState === 'on') {
+    if (humState === 'idle' || humState === 'humidifying') {
         hasHumidifier = true;
         console.log(`[HA Discovery] Humidifier detected via state: ${humState}`);
     }
