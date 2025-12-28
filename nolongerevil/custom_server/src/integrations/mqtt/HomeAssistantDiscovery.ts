@@ -3,9 +3,6 @@
  *
  * Publishes discovery messages for automatic device detection in Home Assistant
  * Reference: https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery
- *
- * Discovery Topic Format:
- * <discovery_prefix>/<component>/[<node_id>/]<object_id>/config
  */
 
 import * as mqtt from 'mqtt';
@@ -241,30 +238,29 @@ export async function publishThermostatDiscovery(
     const deviceObj = await deviceState.get(serial, `device.${serial}`);
     const sharedObj = await deviceState.get(serial, `shared.${serial}`);
 
-    // Check capability using Multiple Sources (Fail-safe)
     const val = deviceObj?.value;
     const sharedVal = sharedObj?.value;
     let hasHumidifier = false;
     
-    // Check 1: Explicit flag (boolean or string) in device
-    if (val?.has_humidifier === true || val?.has_humidifier === 'true') {
+    // --- HUMIDIFIER DETECTION LOGIC ---
+    
+    // Check 1: Explicit 'humidifier_state' as 'idle' or 'humidifying' (Per User Request)
+    const humState = String(val?.humidifier_state || '').toLowerCase();
+    if (humState === 'idle' || humState === 'humidifying' || humState === 'true' || humState === 'on') {
         hasHumidifier = true;
-    } 
-    // Check 2: Explicit flag in shared
-    else if (sharedVal?.has_humidifier === true || sharedVal?.has_humidifier === 'true') {
+        console.log(`[HA Discovery] Humidifier detected via state: ${humState}`);
+    }
+    // Check 2: Explicit 'has_humidifier' flag (boolean or string)
+    else if (val?.has_humidifier === true || val?.has_humidifier === 'true' || 
+             sharedVal?.has_humidifier === true || sharedVal?.has_humidifier === 'true') {
         hasHumidifier = true;
     }
     // Check 3: Wiring check (Star terminal configured as 'hum')
     else if (val?.star_type === 'hum' || val?.pin_star_description === 'hum') {
         hasHumidifier = true;
     }
-    // Check 4: Type check (If type is known and not none)
+    // Check 4: Type check
     else if (val?.humidifier_type && val?.humidifier_type !== 'none' && val?.humidifier_type !== 'unknown') {
-        hasHumidifier = true;
-    }
-    // Check 5: State presence (User's request "check action")
-    // If the device reports a valve state, it physically has a valve.
-    else if (val?.humidifier_state !== undefined) {
         hasHumidifier = true;
     }
 
