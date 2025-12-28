@@ -45,6 +45,11 @@ export class MqttIntegration extends BaseIntegration {
   private isReady: boolean = false;
   private deviceWatchInterval: NodeJS.Timeout | null = null;
 
+  // NEW: Track setup start times (Serial -> Timestamp)
+  private setupMonitoring = new Map<string, number>();
+  // NEW: 1 Hour Timeout in Milliseconds
+  private readonly SETUP_TIMEOUT_MS = 60 * 60 * 1000;
+
   constructor(
     userId: string,
     config: MqttConfig,
@@ -79,11 +84,11 @@ export class MqttIntegration extends BaseIntegration {
 
       await this.subscribeToCommands();
 
+      // Publish Initial State FIRST to populate data for discovery check
       await this.publishInitialState();
 
+      // Discovery now runs after data is loaded (checking for has_humidifier)
       await this.publishDiscoveryMessages();
-
-      // Note: "Kick" removed from here. It is now handled in onDeviceConnected.
 
       this.startDeviceWatching();
 
@@ -92,6 +97,17 @@ export class MqttIntegration extends BaseIntegration {
     } catch (error) {
       console.error(`[MQTT:${this.userId}] Failed to initialize:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * NEW: Call this method when the pairing code is successfully entered.
+   * This starts the 1-hour monitoring window for this specific device.
+   */
+  public startHumidifierSetup(serial: string): void {
+    if (!this.setupMonitoring.has(serial)) {
+      this.setupMonitoring.set(serial, Date.now());
+      console.log(`[MQTT:${this.userId}] Starting 1-hour humidifier setup monitoring for ${serial}`);
     }
   }
 
@@ -171,6 +187,8 @@ export class MqttIntegration extends BaseIntegration {
   private async handleDeviceRemoved(serial: string): Promise<void> {
     // Remove from local tracking
     this.userDeviceSerials.delete(serial);
+    // Remove from setup monitoring if active
+    this.setupMonitoring.delete(serial);
 
     // Mark device as offline
     await this.publishAvailability(serial, 'offline');
@@ -445,51 +463,46 @@ export class MqttIntegration extends BaseIntegration {
           }
           break;
 
-        // NEW: Humidifier Target Logic
         case 'target_humidity':
           let humVal = parseFloat(valueStr);
-          // Special case: -1 (Kick command) is just passed through to trigger update
-          if (!isNaN(humVal)) {
-             if (humVal === -1) {
-                 console.log(`[MQTT:${this.userId}] Received Kick (-1). Turning off humidifier to query state.`);
-                 // Just ensure it's off to be safe while we query
-                 await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', false);
-                 await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', false);
-             } else if (humVal >= 10 && humVal <= 60) {
-                // Real Setpoint
-                humVal = Math.round(humVal / 5) * 5;
-                console.log(`[MQTT:${this.userId}] Setting Humidity Target: ${humVal}%`);
-                await this.updateSharedFields(serial, sharedObj, {
-                    target_humidity: humVal,
-                    target_humidity_enabled: true 
-                });
-                await this.updateDeviceFields(serial, deviceObj, {
-                    target_humidity: humVal,
-                    target_humidity_enabled: true
-                });
-             }
+          // 1. Validation (10-60 range, ignore -1)
+          if (!isNaN(humVal) && humVal >= 10 && humVal <= 60) {
+            // 2. Rounding
+            humVal = Math.round(humVal / 5) * 5;
+            console.log(`[MQTT:${this.userId}] Setting Humidity Target: ${humVal}%`);
+            // 3. Atomic Update (Value + Enable)
+            await this.updateSharedFields(serial, sharedObj, {
+              target_humidity: humVal,
+              target_humidity_enabled: true
+            });
+            await this.updateDeviceFields(serial, deviceObj, {
+              target_humidity: humVal,
+              target_humidity_enabled: true
+            });
           }
           break;
 
-        case 'humidifier_enabled': 
+        case 'humidifier_enabled':
         case 'target_humidity_enabled':
           const isEnabled = valueStr === 'true';
           console.log(`[MQTT:${this.userId}] Setting Humidifier Enabled: ${isEnabled}`);
           if (isEnabled) {
-             const currentTgt = sharedObj.value.target_humidity;
-             const isValidTarget = (currentTgt !== undefined && currentTgt >= 10 && currentTgt <= 60);
-             const safeTgt = isValidTarget ? currentTgt : 40;
-             await this.updateSharedFields(serial, sharedObj, {
-                 target_humidity_enabled: true,
-                 target_humidity: safeTgt
-             });
-             await this.updateDeviceFields(serial, deviceObj, {
-                 target_humidity_enabled: true,
-                 target_humidity: safeTgt
-             });
+            // Turn ON: Default to 40% if current target is bad
+            const currentTgt = sharedObj.value.target_humidity;
+            const isValidTarget = (currentTgt !== undefined && currentTgt >= 10 && currentTgt <= 60);
+            const safeTgt = isValidTarget ? currentTgt : 40;
+            await this.updateSharedFields(serial, sharedObj, {
+              target_humidity_enabled: true,
+              target_humidity: safeTgt
+            });
+            await this.updateDeviceFields(serial, deviceObj, {
+              target_humidity_enabled: true,
+              target_humidity: safeTgt
+            });
           } else {
-             await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', false);
-             await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', false);
+            // Turn OFF: Just disable flag
+            await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', false);
+            await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', false);
           }
           break;
 
@@ -520,12 +533,15 @@ export class MqttIntegration extends BaseIntegration {
     console.log(`[MQTT:${this.userId}] Notified ${notifyResult.notified} subscriber(s) for ${serial}/${objectKey}`);
   }
 
+  // Helper for atomic updates to shared state
   private async updateSharedFields(serial: string, currentObj: any, fields: Record<string, any>): Promise<void> {
     const objectKey = `shared.${serial}`;
     const newValue = { ...currentObj.value, ...fields };
     const newRevision = currentObj.object_revision + 1;
-    await this.deviceState.upsert(serial, objectKey, newRevision, Date.now(), newValue);
-    const notifyResult = this.subscriptionManager.notify(serial, objectKey, newValue);
+    const newTimestamp = Date.now();
+
+    const updatedObj = await this.deviceState.upsert(serial, objectKey, newRevision, newTimestamp, newValue);
+    const notifyResult = this.subscriptionManager.notify(serial, objectKey, updatedObj);
     console.log(`[MQTT:${this.userId}] Notified ${notifyResult.notified} subscriber(s) for ${serial}/${objectKey}`);
   }
 
@@ -539,7 +555,7 @@ export class MqttIntegration extends BaseIntegration {
     const newTimestamp = Date.now();
 
     const updatedObj = await this.deviceState.upsert(serial, objectKey, newRevision, newTimestamp, newValue);
-    const notifyResult = this.subscriptionManager.notify(serial, objectKey, newValue);
+    const notifyResult = this.subscriptionManager.notify(serial, objectKey, updatedObj);
     console.log(`[MQTT:${this.userId}] Notified ${notifyResult.notified} subscriber(s) for ${serial}/${objectKey}`);
   }
 
@@ -556,7 +572,7 @@ export class MqttIntegration extends BaseIntegration {
     const newTimestamp = Date.now();
 
     const updatedObj = await this.deviceState.upsert(serial, objectKey, newRevision, newTimestamp, newValue);
-    const notifyResult = this.subscriptionManager.notify(serial, objectKey, newValue);
+    const notifyResult = this.subscriptionManager.notify(serial, objectKey, updatedObj);
     console.log(`[MQTT:${this.userId}] Notified ${notifyResult.notified} subscriber(s) for ${serial}/${objectKey} (${Object.keys(fields).length} fields updated)`);
   }
 
@@ -727,23 +743,58 @@ export class MqttIntegration extends BaseIntegration {
         await this.publish(`${prefix}/${serial}/ha/target_temperature_high`, String(shared.target_temperature_high), { retain: true, qos: 0 });
       }
 
-      // --- HUMIDIFIER STATE ---
+      // Humidifier State
       const targetHum = device.target_humidity ?? shared.target_humidity;
       if (targetHum !== undefined && targetHum >= 10 && targetHum <= 60) {
         await this.publish(`${prefix}/${serial}/device/target_humidity`, String(targetHum), { retain: true, qos: 0 });
       }
 
       const rawEnabled = shared.target_humidity_enabled === true || device.target_humidity_enabled === true;
-      const isTargetOff = targetHum === -1; 
+      const isTargetOff = targetHum === -1;
       const isEnabled = rawEnabled && !isTargetOff;
-      await this.publish(`${prefix}/${serial}/ha/humidifier_state`, String(isEnabled), { retain: true, qos: 0 });
+      await this.publish(`${prefix}/${serial}/ha/humidifier_enabled`, String(isEnabled), { retain: true, qos: 0 });
 
       const valveState = String(device.humidifier_state).toLowerCase();
-      const isValveOpen = valveState === 'true' || valveState === 'on'; 
+      const isValveOpen = valveState === 'true' || valveState === 'on';
       let humAction = 'idle';
       if (isEnabled && isValveOpen) humAction = 'humidifying';
+      
+      // =================================================================================
+      // NEW: Setup Wait Loop Logic
+      // Checks if we are in the setup phase and if valid action is seen
+      // =================================================================================
+      if (this.setupMonitoring.has(serial)) {
+        const startTime = this.setupMonitoring.get(serial)!;
+        
+        // 1. Check if 1 Hour has passed (Timeout)
+        if (Date.now() - startTime > this.SETUP_TIMEOUT_MS) {
+          console.log(`[MQTT:${this.userId}] Setup Timeout: 1 hour passed for ${serial}. Stopping humidifier monitor.`);
+          this.setupMonitoring.delete(serial);
+        }
+        // 2. Check if Action is 'idle' or 'humidifying'
+        // We MUST ensure device.humidifier_state is not undefined to avoid false positives from defaults
+        else if (device.humidifier_state !== undefined && (humAction === 'idle' || humAction === 'humidifying')) {
+          console.log(`[MQTT:${this.userId}] Setup Success: Humidifier action '${humAction}' detected for ${serial}!`);
+          
+          // A. Persist 'has_humidifier' to database so it survives restarts
+          await this.updateDeviceValue(serial, deviceObj, 'has_humidifier', true);
+          
+          // B. Exit the loop (stop monitoring)
+          this.setupMonitoring.delete(serial);
+
+          // C. Force immediate Discovery Update so the Humidifier entity appears in Home Assistant
+          await publishThermostatDiscovery(
+            this.client,
+            serial,
+            this.deviceState,
+            this.config.topicPrefix!,
+            this.config.discoveryPrefix!
+          );
+        }
+      }
+      // =================================================================================
+      
       await this.publish(`${prefix}/${serial}/ha/humidifier_action`, humAction, { retain: true, qos: 0 });
-      // --- END HUMIDIFIER STATE ---
 
       const haMode = nestModeToHA(shared.target_temperature_type);
       await this.publish(`${prefix}/${serial}/ha/mode`, haMode, { retain: true, qos: 0 });
@@ -832,12 +883,6 @@ export class MqttIntegration extends BaseIntegration {
       return;
     }
 
-    // Filter out updates that are NOT device or shared data
-    // This prevents user profile updates from triggering false discovery checks
-    if (!change.objectKey.startsWith('device.') && !change.objectKey.startsWith('shared.')) {
-        return;
-    }
-
     console.log(`[MQTT:${this.userId}] Publishing state change: ${change.serial}/${change.objectKey}`);
 
     await this.publishObjectState(change.serial, change.objectKey, change.value);
@@ -852,13 +897,6 @@ export class MqttIntegration extends BaseIntegration {
     }
 
     await this.publishAvailability(serial, 'online');
-
-    // NEW: Send the "Kick" command now that the device is confirmed online.
-    if (this.client) {
-        console.log(`[MQTT:${this.userId}] Device ${serial} connected. Sending humidifier status check (Kick)...`);
-        const topic = `${this.config.topicPrefix}/${serial}/ha/target_humidity/set`;
-        this.client.publish(topic, '-1', { qos: 0 });
-    }
   }
 
   /**
