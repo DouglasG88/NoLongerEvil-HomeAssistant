@@ -74,14 +74,7 @@ export class MqttIntegration extends BaseIntegration {
       await this.connectToBroker();
       await this.subscribeToCommands();
 
-      // Wait for existing devices to have data
-      if (this.userDeviceSerials.size > 0) {
-        console.log(`[MQTT:${this.userId}] Waiting for initial state for ${this.userDeviceSerials.size} device(s)...`);
-        for (const serial of this.userDeviceSerials) {
-            await this.waitForDeviceData(serial);
-        }
-      }
-
+      // No waiting - standard order
       await this.publishDiscoveryMessages();
       await this.publishInitialState();
 
@@ -92,34 +85,6 @@ export class MqttIntegration extends BaseIntegration {
       console.error(`[MQTT:${this.userId}] Failed to initialize:`, error);
       throw error;
     }
-  }
-
-  /**
-   * Helper: Pauses execution until specific device has data in DB.
-   * Prevents "Race Conditions" where Discovery runs before has_humidifier is known.
-   */
-  private async waitForDeviceData(serial: string): Promise<void> {
-    const maxRetries = 20; // 10 seconds total wait
-    const pollMs = 500;
-    
-    let retries = 0;
-    while (retries < maxRetries) {
-      const deviceObj = await this.deviceState.get(serial, `device.${serial}`);
-      
-      // We check if the object exists AND has keys (meaning data flood arrived)
-      if (deviceObj && deviceObj.value && Object.keys(deviceObj.value).length > 5) {
-        // Found data! Wait 2 more seconds to ensure the full packet (capabilities) is processed
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        return; 
-      }
-      
-      if (retries % 4 === 0) {
-          console.log(`[MQTT:${this.userId}] Waiting for data load for ${serial} (Attempt ${retries}/${maxRetries})...`);
-      }
-      await new Promise(resolve => setTimeout(resolve, pollMs));
-      retries++;
-    }
-    console.warn(`[MQTT:${this.userId}] Timed out waiting for data for ${serial}. Discovery might be incomplete.`);
   }
 
   private startDeviceWatching(): void {
@@ -140,7 +105,6 @@ export class MqttIntegration extends BaseIntegration {
       for (const device of ownedDevices) currentSerials.add(device.serial);
       for (const share of sharedDevices) currentSerials.add(share.serial);
 
-      // Handle Removals
       for (const serial of this.userDeviceSerials) {
         if (!currentSerials.has(serial)) {
           console.log(`[MQTT:${this.userId}] Device ${serial} was removed, cleaning up...`);
@@ -148,18 +112,10 @@ export class MqttIntegration extends BaseIntegration {
         }
       }
 
-      // Handle Additions
       for (const serial of currentSerials) {
         if (!this.userDeviceSerials.has(serial)) {
-          console.log(`[MQTT:${this.userId}] New device ${serial} detected...`);
+          console.log(`[MQTT:${this.userId}] New device ${serial} detected, publishing discovery...`);
           this.userDeviceSerials.add(serial);
-          
-          // --- CRITICAL FIX START ---
-          // Wait for data to arrive before running discovery for this new device
-          await this.waitForDeviceData(serial);
-          console.log(`[MQTT:${this.userId}] Data loaded for ${serial}, publishing discovery...`);
-          // --- CRITICAL FIX END ---
-
           if (this.config.homeAssistantDiscovery && this.client) {
             try {
               await publishThermostatDiscovery(
@@ -268,13 +224,11 @@ export class MqttIntegration extends BaseIntegration {
     try {
       const prefix = this.config.topicPrefix!;
 
-      // 1. HA Specific Logic (Now includes Humidifier)
       if (topic.includes('/ha/') && topic.endsWith('/set')) {
         await this.handleHomeAssistantCommand(topic, message);
         return;
       }
 
-      // 2. Generic Device Logic
       const parsed = parseCommandTopic(topic, prefix);
       if (!parsed) {
         console.warn(`[MQTT:${this.userId}] Invalid command topic: ${topic}`);
@@ -380,7 +334,6 @@ export class MqttIntegration extends BaseIntegration {
           }
           break;
 
-        // --- NEW HUMIDIFIER LOGIC (Standardized) ---
         case 'target_humidity':
           let humVal = parseFloat(valueStr);
           if (!isNaN(humVal) && humVal >= 10 && humVal <= 60) {
@@ -657,6 +610,10 @@ export class MqttIntegration extends BaseIntegration {
 
   async onDeviceStateChange(change: DeviceStateChange): Promise<void> {
     if (!this.userDeviceSerials.has(change.serial)) return;
+    
+    // NEW LOG: Confirm we see the update
+    console.log(`[MQTT:${this.userId}] Received state update for ${change.serial}, re-evaluating discovery...`);
+    
     await this.publishObjectState(change.serial, change.objectKey, change.value);
   }
 
