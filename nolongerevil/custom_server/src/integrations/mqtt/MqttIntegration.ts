@@ -79,10 +79,12 @@ export class MqttIntegration extends BaseIntegration {
 
       await this.subscribeToCommands();
 
-      // Publish Initial State FIRST to populate data for discovery check
+      // NEW: Wait for the initial state (get-status response) to populate in DB
+      // This ensures we have capabilities (has_humidifier) before running discovery
+      await this.waitForInitialState();
+
       await this.publishInitialState();
 
-      // Discovery now runs after data is loaded (checking for has_humidifier)
       await this.publishDiscoveryMessages();
 
       this.startDeviceWatching();
@@ -92,6 +94,36 @@ export class MqttIntegration extends BaseIntegration {
     } catch (error) {
       console.error(`[MQTT:${this.userId}] Failed to initialize:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * Wait for device objects to be populated in the state service
+   */
+  private async waitForInitialState(): Promise<void> {
+    if (this.userDeviceSerials.size === 0) return;
+
+    console.log(`[MQTT:${this.userId}] Waiting for initial device state...`);
+    const maxRetries = 10;
+    const delayMs = 2000;
+
+    for (const serial of this.userDeviceSerials) {
+      let retries = 0;
+      while (retries < maxRetries) {
+        // Check for the main device object which contains capabilities
+        const deviceObj = await this.deviceState.get(serial, `device.${serial}`);
+        if (deviceObj) {
+          break; 
+        }
+        
+        if (retries === 0) console.log(`[MQTT:${this.userId}] Waiting for data for ${serial}...`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        retries++;
+      }
+      
+      if (retries === maxRetries) {
+         console.warn(`[MQTT:${this.userId}] Timed out waiting for initial state for ${serial} - Discovery might be incomplete`);
+      }
     }
   }
 
@@ -445,47 +477,29 @@ export class MqttIntegration extends BaseIntegration {
           }
           break;
 
+        // NEW: Humidifier Slider Logic
         case 'target_humidity':
           let humVal = parseFloat(valueStr);
-          // 1. Validation (10-60 range, ignore -1)
           if (!isNaN(humVal) && humVal >= 10 && humVal <= 60) {
-            // 2. Rounding
             humVal = Math.round(humVal / 5) * 5;
             console.log(`[MQTT:${this.userId}] Setting Humidity Target: ${humVal}%`);
-            // 3. Atomic Update (Value + Enable)
             await this.updateSharedFields(serial, sharedObj, {
               target_humidity: humVal,
-              target_humidity_enabled: true
+              target_humidity_enabled: true,
             });
             await this.updateDeviceFields(serial, deviceObj, {
               target_humidity: humVal,
-              target_humidity_enabled: true
+              target_humidity_enabled: true,
             });
           }
           break;
 
-        case 'humidifier_enabled':
-        case 'target_humidity_enabled':
+        // NEW: Humidifier Switch Logic
+        case 'humidifier_state':
           const isEnabled = valueStr === 'true';
-          console.log(`[MQTT:${this.userId}] Setting Humidifier Enabled: ${isEnabled}`);
-          if (isEnabled) {
-            // Turn ON: Default to 40% if current target is bad
-            const currentTgt = sharedObj.value.target_humidity;
-            const isValidTarget = (currentTgt !== undefined && currentTgt >= 10 && currentTgt <= 60);
-            const safeTgt = isValidTarget ? currentTgt : 40;
-            await this.updateSharedFields(serial, sharedObj, {
-              target_humidity_enabled: true,
-              target_humidity: safeTgt
-            });
-            await this.updateDeviceFields(serial, deviceObj, {
-              target_humidity_enabled: true,
-              target_humidity: safeTgt
-            });
-          } else {
-            // Turn OFF: Just disable flag
-            await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', false);
-            await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', false);
-          }
+          console.log(`[MQTT:${this.userId}] Setting Humidifier Enabled (State): ${isEnabled}`);
+          await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', isEnabled);
+          await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', isEnabled);
           break;
 
         default:
@@ -725,22 +739,21 @@ export class MqttIntegration extends BaseIntegration {
         await this.publish(`${prefix}/${serial}/ha/target_temperature_high`, String(shared.target_temperature_high), { retain: true, qos: 0 });
       }
 
-      // Humidifier State
+      // --- NEW: HUMIDIFIER STATE ---
       const targetHum = device.target_humidity ?? shared.target_humidity;
       if (targetHum !== undefined && targetHum >= 10 && targetHum <= 60) {
         await this.publish(`${prefix}/${serial}/device/target_humidity`, String(targetHum), { retain: true, qos: 0 });
       }
 
-      const rawEnabled = shared.target_humidity_enabled === true || device.target_humidity_enabled === true;
-      const isTargetOff = targetHum === -1;
-      const isEnabled = rawEnabled && !isTargetOff;
-      await this.publish(`${prefix}/${serial}/ha/humidifier_enabled`, String(isEnabled), { retain: true, qos: 0 });
+      const isEnabled = shared.target_humidity_enabled === true || device.target_humidity_enabled === true;
+      await this.publish(`${prefix}/${serial}/ha/humidifier_state`, String(isEnabled), { retain: true, qos: 0 });
 
       const valveState = String(device.humidifier_state).toLowerCase();
-      const isValveOpen = valveState === 'true' || valveState === 'on';
+      const isValveOpen = valveState === 'true' || valveState === 'on'; 
       let humAction = 'idle';
       if (isEnabled && isValveOpen) humAction = 'humidifying';
       await this.publish(`${prefix}/${serial}/ha/humidifier_action`, humAction, { retain: true, qos: 0 });
+      // --- END HUMIDIFIER STATE ---
 
       const haMode = nestModeToHA(shared.target_temperature_type);
       await this.publish(`${prefix}/${serial}/ha/mode`, haMode, { retain: true, qos: 0 });
