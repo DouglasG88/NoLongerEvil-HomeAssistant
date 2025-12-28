@@ -118,7 +118,7 @@ export function buildHumidifierDiscovery(
 ): any {
   return {
     unique_id: `nolongerevil_${serial}_humidifier`,
-    name: `${deviceName} Humidifier Status`,
+    name: `${deviceName} Humidifier`,
     default_entity_id: `humidifier.nest_${serial}_humidifier`,
     device: {
       identifiers: [`nolongerevil_${serial}`],
@@ -164,7 +164,7 @@ export function buildHumidifierActionSensorDiscovery(
 ): any {
   return {
     unique_id: `nolongerevil_${serial}_humidifier_status`,
-    name: `Humidifier Status`,
+    name: `${deviceName} Humidifier Status`,
     default_entity_id: `sensor.nest_${serial}_humidifier_status`,
     device: {
       identifiers: [`nolongerevil_${serial}`],
