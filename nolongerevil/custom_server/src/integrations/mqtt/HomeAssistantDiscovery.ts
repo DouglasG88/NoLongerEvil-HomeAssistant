@@ -3,6 +3,9 @@
  *
  * Publishes discovery messages for automatic device detection in Home Assistant
  * Reference: https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery
+ *
+ * Discovery Topic Format:
+ * <discovery_prefix>/<component>/[<node_id>/]<object_id>/config
  */
 
 import * as mqtt from 'mqtt';
@@ -20,7 +23,7 @@ export function buildClimateDiscovery(
   return {
     unique_id: `nolongerevil_${serial}`,
     name: deviceName,
-    default_entity_id: `climate.nest_${serial}`, // Updated from object_id
+    default_entity_id: `climate.nest_${serial}`,
     device: {
       identifiers: [`nolongerevil_${serial}`],
       name: deviceName,
@@ -252,8 +255,16 @@ export async function publishThermostatDiscovery(
         hasHumidifier = true;
     }
     // Check 3: Wiring check (Star terminal configured as 'hum')
-    // This is the most reliable check if the boolean flag is missing
     else if (val?.star_type === 'hum' || val?.pin_star_description === 'hum') {
+        hasHumidifier = true;
+    }
+    // Check 4: Type check (If type is known and not none)
+    else if (val?.humidifier_type && val?.humidifier_type !== 'none' && val?.humidifier_type !== 'unknown') {
+        hasHumidifier = true;
+    }
+    // Check 5: State presence (User's request "check action")
+    // If the device reports a valve state, it physically has a valve.
+    else if (val?.humidifier_state !== undefined) {
         hasHumidifier = true;
     }
 
