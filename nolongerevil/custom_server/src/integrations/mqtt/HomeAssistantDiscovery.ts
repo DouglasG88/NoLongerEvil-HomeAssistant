@@ -129,22 +129,19 @@ export function buildHumidifierDiscovery(
       payload_available: 'online',
       payload_not_available: 'offline',
     },
-    // 1. Switch (On/Off) - Direct to /ha/ topic
-    command_topic: `${topicPrefix}/${serial}/ha/humidifier_state/set`,
-    state_topic: `${topicPrefix}/${serial}/ha/humidifier_state`,
+    command_topic: `${topicPrefix}/${serial}/ha/humidifier_enabled/set`,
+    state_topic: `${topicPrefix}/${serial}/ha/humidifier_enabled`,
     payload_on: 'true',
     payload_off: 'false',
-    
-    // 2. Slider (Target) - Direct to /ha/ topic
     target_humidity_command_topic: `${topicPrefix}/${serial}/ha/target_humidity/set`,
     target_humidity_state_topic: `${topicPrefix}/${serial}/device/target_humidity`,
     min_humidity: 10,
     max_humidity: 60,
     
-    // 3. Status
+    // RESTORED: This allows the main entity to show "Humidifying" or "Idle"
     action_topic: `${topicPrefix}/${serial}/ha/humidifier_action`,
-    current_humidity_topic: `${topicPrefix}/${serial}/ha/current_humidity`,
     
+    current_humidity_topic: `${topicPrefix}/${serial}/ha/current_humidity`,
     device_class: 'humidifier',
     origin: {
         name: 'NoLongerEvil',
