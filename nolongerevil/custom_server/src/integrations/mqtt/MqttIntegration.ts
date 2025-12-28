@@ -74,9 +74,14 @@ export class MqttIntegration extends BaseIntegration {
       await this.connectToBroker();
       await this.subscribeToCommands();
 
-      // No waiting - standard order
+      // 1. Standard Startup
       await this.publishDiscoveryMessages();
       await this.publishInitialState();
+
+      // 2. NEW: The "Humidifier Kick"
+      // Send -1 to target_humidity. This forces the thermostat to report its humidifier status immediately.
+      // If a humidifier exists, it will reply with "humidifier_state: false" (idle).
+      await this.triggerHumidifierKick();
 
       this.startDeviceWatching();
       this.isReady = true;
@@ -84,6 +89,21 @@ export class MqttIntegration extends BaseIntegration {
     } catch (error) {
       console.error(`[MQTT:${this.userId}] Failed to initialize:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * Sends a benign command (-1 target humidity) to force the Nest to report humidifier capabilities.
+   */
+  private async triggerHumidifierKick(): Promise<void> {
+    if (!this.client || this.userDeviceSerials.size === 0) return;
+
+    console.log(`[MQTT:${this.userId}] Sending humidifier status check (Kick) to ${this.userDeviceSerials.size} device(s)...`);
+    
+    for (const serial of this.userDeviceSerials) {
+      // Sending -1 effectively turns off the humidifier but forces a state report
+      const topic = `${this.config.topicPrefix}/${serial}/ha/target_humidity/set`;
+      this.client.publish(topic, '-1', { qos: 0 });
     }
   }
 
@@ -116,6 +136,13 @@ export class MqttIntegration extends BaseIntegration {
         if (!this.userDeviceSerials.has(serial)) {
           console.log(`[MQTT:${this.userId}] New device ${serial} detected, publishing discovery...`);
           this.userDeviceSerials.add(serial);
+          
+          // Also kick new devices when they appear
+          if (this.client) {
+             const topic = `${this.config.topicPrefix}/${serial}/ha/target_humidity/set`;
+             this.client.publish(topic, '-1', { qos: 0 });
+          }
+
           if (this.config.homeAssistantDiscovery && this.client) {
             try {
               await publishThermostatDiscovery(
@@ -224,11 +251,13 @@ export class MqttIntegration extends BaseIntegration {
     try {
       const prefix = this.config.topicPrefix!;
 
+      // 1. HA Specific Logic (Now includes Humidifier)
       if (topic.includes('/ha/') && topic.endsWith('/set')) {
         await this.handleHomeAssistantCommand(topic, message);
         return;
       }
 
+      // 2. Generic Device Logic
       const parsed = parseCommandTopic(topic, prefix);
       if (!parsed) {
         console.warn(`[MQTT:${this.userId}] Invalid command topic: ${topic}`);
@@ -334,24 +363,34 @@ export class MqttIntegration extends BaseIntegration {
           }
           break;
 
+        // --- NEW HUMIDIFIER LOGIC ---
         case 'target_humidity':
           let humVal = parseFloat(valueStr);
-          if (!isNaN(humVal) && humVal >= 10 && humVal <= 60) {
-            humVal = Math.round(humVal / 5) * 5;
-            console.log(`[MQTT:${this.userId}] Setting Humidity Target: ${humVal}%`);
-            await this.updateSharedFields(serial, sharedObj, {
-                target_humidity: humVal,
-                target_humidity_enabled: true 
-            });
-            await this.updateDeviceFields(serial, deviceObj, {
-                target_humidity: humVal,
-                target_humidity_enabled: true
-            });
+          // Special case: -1 (Kick command) is passed through, but valid setpoints are checked
+          if (!isNaN(humVal)) {
+             if (humVal === -1) {
+                 // Kick Command: just disable humidifier to be safe while forcing an update
+                 console.log(`[MQTT:${this.userId}] Received Kick (-1). Forcing humidifier OFF to query state.`);
+                 await this.updateSharedValue(serial, sharedObj, 'target_humidity_enabled', false);
+                 await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', false);
+             } else if (humVal >= 10 && humVal <= 60) {
+                // Real Setpoint
+                humVal = Math.round(humVal / 5) * 5;
+                console.log(`[MQTT:${this.userId}] Setting Humidity Target: ${humVal}%`);
+                await this.updateSharedFields(serial, sharedObj, {
+                    target_humidity: humVal,
+                    target_humidity_enabled: true 
+                });
+                await this.updateDeviceFields(serial, deviceObj, {
+                    target_humidity: humVal,
+                    target_humidity_enabled: true
+                });
+             }
           }
           break;
 
         case 'humidifier_enabled': 
-        case 'humidifier_state': 
+        case 'humidifier_state': // Support both command topics
         case 'target_humidity_enabled':
           const isEnabled = valueStr === 'true';
           console.log(`[MQTT:${this.userId}] Setting Humidifier Enabled: ${isEnabled}`);
@@ -610,10 +649,8 @@ export class MqttIntegration extends BaseIntegration {
 
   async onDeviceStateChange(change: DeviceStateChange): Promise<void> {
     if (!this.userDeviceSerials.has(change.serial)) return;
-    
-    // NEW LOG: Confirm we see the update
-    console.log(`[MQTT:${this.userId}] Received state update for ${change.serial}, re-evaluating discovery...`);
-    
+    // When the kick works, this function receives the update and triggers publishObjectState,
+    // which in turn calls publishHomeAssistantState, effectively re-running discovery with fresh data.
     await this.publishObjectState(change.serial, change.objectKey, change.value);
   }
 
