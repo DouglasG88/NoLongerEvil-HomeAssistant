@@ -606,7 +606,8 @@ export class MqttIntegration extends BaseIntegration {
         // Now publish Home Assistant state once (after all objects loaded)
         if (this.config.homeAssistantDiscovery) {
           console.log(`[MQTT:${this.userId}] Publishing Home Assistant state for ${serial}...`);
-          await this.publishHomeAssistantState(serial);
+          // PASS 'true' HERE to force it through during startup
+          await this.publishHomeAssistantState(serial, true);
         }
 
         // Mark device as online
@@ -652,8 +653,9 @@ export class MqttIntegration extends BaseIntegration {
    * All temperatures are published in Celsius (Nest's internal format)
    * HA handles display conversion based on user preferences
    */
-  private async publishHomeAssistantState(serial: string): Promise<void> {
-    if (!this.client || !this.isReady) {
+  private async publishHomeAssistantState(serial: string, force: boolean = false): Promise<void> {
+    // Update the safety check to allow passing if 'force' is true
+    if (!this.client || (!this.isReady && !force)) {
       console.log(`[MQTT:${this.userId}] Cannot publish HA state for ${serial} - client not ready`);
       return;
     }
