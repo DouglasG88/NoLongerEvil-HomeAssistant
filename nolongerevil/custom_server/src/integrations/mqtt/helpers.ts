@@ -342,3 +342,41 @@ export async function nestPresetToHA(
     return 'home';
   }
 }
+
+/**
+ * Derive Humidifier action
+ * Returns: "humidifying", "idle"
+ */
+export async function deriveHumidifierAction(
+  serial: string,
+  deviceState: DeviceStateService
+): Promise<string> {
+  try {
+    const deviceObj = await deviceState.get(serial, `device.${serial}`);
+    const sharedObj = await deviceState.get(serial, `shared.${serial}`);
+    const device = deviceObj?.value || {};
+    const shared = sharedObj?.value || {};
+
+    // Check if enabled (device or shared)
+    const rawEnabled = shared.target_humidity_enabled === true || device.target_humidity_enabled === true;
+    
+    // Check if target is valid (Nest sets -1 for off)
+    const targetHum = device.target_humidity ?? shared.target_humidity;
+    const isTargetOff = targetHum === -1;
+    
+    const isEnabled = rawEnabled && !isTargetOff;
+
+    if (!isEnabled) {
+      return 'idle';
+    }
+
+    // Check valve state
+    const valveState = String(device.humidifier_state).toLowerCase();
+    const isValveOpen = valveState === 'true' || valveState === 'on';
+
+    return isValveOpen ? 'humidifying' : 'idle';
+  } catch (error) {
+    console.error(`[MQTT Helpers] Error deriving humidifier action for ${serial}:`, error);
+    return 'idle';
+  }
+}
