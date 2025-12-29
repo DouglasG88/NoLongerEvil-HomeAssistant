@@ -29,7 +29,7 @@ import {
   haModeToNest,
   deriveHvacAction,
   deriveFanMode,
-  deriveHumidifierAction, // <--- Ensure this is in your helpers.ts
+  deriveHumidifierAction, // <--- Assumes you added this to helpers.ts
   isDeviceAway,
   isFanRunning,
   isEcoActive,
@@ -249,7 +249,45 @@ export class MqttIntegration extends BaseIntegration {
         }
       });
 
+      // Hook for message handling
       this.client.on('message', async (topic, message) => {
+        
+        // --- NEW: CATCH RAW HUMIDIFIER UPDATE ---
+        // This listens for the message seen in your screenshot:
+        // nolongerevil/SERIAL/device/has_humidifier
+        if (topic.includes('/device/has_humidifier') && !topic.endsWith('/set')) {
+             try {
+                 const parts = topic.split('/'); 
+                 // Expected parts: [prefix, serial, 'device', 'has_humidifier']
+                 if (parts.length >= 4) {
+                     const serial = parts[1];
+                     const valueStr = message.toString();
+                     
+                     console.log(`[MQTT:${this.userId}] DETECTED HUMIDIFIER CAPABILITY: ${serial} = ${valueStr}`);
+                     
+                     // 1. Force update to database
+                     const deviceObj = await this.deviceState.get(serial, `device.${serial}`);
+                     if (deviceObj) {
+                         const newVal = valueStr === 'true';
+                         
+                         // Update DB if value changed or is undefined
+                         if (deviceObj.value.has_humidifier !== newVal) {
+                             const newValue = { ...deviceObj.value, has_humidifier: newVal };
+                             await this.deviceState.upsert(serial, `device.${serial}`, deviceObj.object_revision + 1, Date.now(), newValue);
+                             
+                             // 2. Trigger Discovery Update immediately so entities appear
+                             // We pass 'true' to force the update even if isReady is false
+                             await this.publishHomeAssistantState(serial, true);
+                         }
+                     }
+                 }
+             } catch (e) {
+                 console.error(`[MQTT:${this.userId}] Error processing humidifier update:`, e);
+             }
+        }
+        // ----------------------------------------
+
+        // Pass everything else to standard handler
         await this.handleCommand(topic, message);
       });
 
@@ -274,6 +312,11 @@ export class MqttIntegration extends BaseIntegration {
 
     if (this.config.publishRaw !== false) {
       patterns.push(...getCommandTopicPatterns(prefix));
+      
+      // --- ADDED ---
+      // Subscribe to raw updates from the thermostat so we catch 'has_humidifier'
+      patterns.push(`${prefix}/+/device/+`); 
+      // -------------
     }
 
     if (this.config.homeAssistantDiscovery) {
@@ -309,7 +352,10 @@ export class MqttIntegration extends BaseIntegration {
 
       const parsed = parseCommandTopic(topic, prefix);
       if (!parsed) {
-        console.warn(`[MQTT:${this.userId}] Invalid command topic: ${topic}`);
+        // Reduced log noise for raw updates we aren't handling explicitly
+        if (!topic.includes('/device/has_humidifier')) {
+             // console.warn(`[MQTT:${this.userId}] Invalid command topic: ${topic}`);
+        }
         return;
       }
 
@@ -712,7 +758,7 @@ export class MqttIntegration extends BaseIntegration {
       }
 
       // --------------------------------------------------------------------------------
-      // Humidifier Logic (Cleaned up to use Helpers and Retain)
+      // Humidifier Logic (Using Helpers and DB value)
       // --------------------------------------------------------------------------------
       
       // 1. Publish Target Humidity
@@ -732,7 +778,8 @@ export class MqttIntegration extends BaseIntegration {
       await this.publish(`${prefix}/${serial}/ha/humidifier_action`, humAction, { retain: true, qos: 0 });
 
       // 4. Publish Capability Flag (RETAINED)
-      // This ensures Home Assistant discovery always sees the capability on startup
+      // This matches your original logic: check the DB for the flag. 
+      // The DB is now populated by the listener in connectToBroker.
       const hasHumidifier = device.has_humidifier ?? shared.has_humidifier;
       if (hasHumidifier !== undefined) {
           await this.publish(`${prefix}/${serial}/ha/has_humidifier`, String(hasHumidifier), { retain: true, qos: 0 });
