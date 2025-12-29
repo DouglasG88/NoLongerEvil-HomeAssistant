@@ -382,8 +382,12 @@ export async function publishThermostatDiscovery(
     
     // 1. Fetch Device Data for Capabilities Check
     // We check if the device actually has a humidifier before creating the entity
+    // We check both device and shared objects for maximum compatibility
     const deviceObj = await deviceState.get(serial, `device.${serial}`);
-    const hasHumidifier = deviceObj?.value?.has_humidifier === true;
+    const sharedObj = await deviceState.get(serial, `shared.${serial}`);
+    
+    const hasHumidifier = (deviceObj?.value?.has_humidifier === true) || 
+                          (sharedObj?.value?.has_humidifier === true);
 
     // Climate entity (main thermostat control)
     // Always uses Celsius - HA handles user display preferences
@@ -396,6 +400,8 @@ export async function publishThermostatDiscovery(
 
     // Humidifier (Conditional)
     if (hasHumidifier) {
+      console.log(`[HA Discovery] ${serial} has humidifier capability, publishing humidifier entities`);
+      
       // Main Humidifier Entity (Target + On/Off)
       const humConfig = buildHumidifierDiscovery(serial, deviceName, topicPrefix);
       await publishDiscoveryMessage(
@@ -500,7 +506,7 @@ export async function removeDeviceDiscovery(
   const topics = [
     `${discoveryPrefix}/climate/nest_${serial}/thermostat/config`,
     `${discoveryPrefix}/humidifier/nest_${serial}/humidifier/config`,
-    `${discoveryPrefix}/sensor/nest_${serial}/humidifier_status/config`, // Remove Status Sensor
+    `${discoveryPrefix}/sensor/nest_${serial}/humidifier_status/config`,
     `${discoveryPrefix}/sensor/nest_${serial}/temperature/config`,
     `${discoveryPrefix}/sensor/nest_${serial}/humidity/config`,
     `${discoveryPrefix}/sensor/nest_${serial}/outdoor_temperature/config`,
