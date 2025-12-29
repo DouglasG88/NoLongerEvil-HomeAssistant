@@ -29,7 +29,7 @@ import {
   haModeToNest,
   deriveHvacAction,
   deriveFanMode,
-  deriveHumidifierAction, // <--- Assumes you added this to helpers.ts
+  deriveHumidifierAction, 
   isDeviceAway,
   isFanRunning,
   isEcoActive,
@@ -251,41 +251,82 @@ export class MqttIntegration extends BaseIntegration {
 
       // Hook for message handling
       this.client.on('message', async (topic, message) => {
-        
-        // --- NEW: CATCH RAW HUMIDIFIER UPDATE ---
-        // This listens for the message seen in your screenshot:
-        // nolongerevil/SERIAL/device/has_humidifier
+        const payload = message.toString();
+
+        // -------------------------------------------------------------------
+        // LOGIC TO DETECT HUMIDIFIER CAPABILITY FROM MQTT MESSAGES
+        // -------------------------------------------------------------------
+
+        let detectedSerial: string | null = null;
+        let detectedCapability: boolean | null = null;
+
+        // 1. Check for raw device update (From Firmware)
+        // Topic: nolongerevil/SERIAL/device/has_humidifier
         if (topic.includes('/device/has_humidifier') && !topic.endsWith('/set')) {
+          const parts = topic.split('/'); 
+          if (parts.length >= 4) {
+            detectedSerial = parts[1];
+            // If firmware says true, it's true. If false, it's false.
+            detectedCapability = payload === 'true';
+            console.log(`[MQTT:${this.userId}] DETECTED (Device Report): ${detectedSerial} has_humidifier = ${detectedCapability}`);
+          }
+        }
+
+        // 2. Check for Humidifier Action (Implicit Existence)
+        // Topic: nolongerevil/SERIAL/ha/humidifier_action
+        else if (topic.includes('/ha/humidifier_action') && !topic.endsWith('/set')) {
+           const parts = topic.split('/');
+           if (parts.length >= 4) {
+             const serial = parts[1];
+             // If action is "idle" or "humidifying", it MUST exist.
+             if (payload === 'idle' || payload === 'humidifying') {
+               detectedSerial = serial;
+               detectedCapability = true;
+               console.log(`[MQTT:${this.userId}] DETECTED (Action Observed): ${detectedSerial} has_humidifier = true`);
+             }
+           }
+        }
+
+        // 3. Check for Explicit Removal via HA Topic
+        // Topic: nolongerevil/SERIAL/ha/has_humidifier
+        else if (topic.includes('/ha/has_humidifier') && !topic.endsWith('/set')) {
+           const parts = topic.split('/');
+           if (parts.length >= 4) {
+             const serial = parts[1];
+             // If we see "false" here, it means it's gone.
+             if (payload === 'false') {
+               detectedSerial = serial;
+               detectedCapability = false;
+               console.log(`[MQTT:${this.userId}] DETECTED (Explicit Removal): ${detectedSerial} has_humidifier = false`);
+             }
+           }
+        }
+
+        // --- Apply Updates if Detection Occurred ---
+        if (detectedSerial !== null && detectedCapability !== null) {
              try {
-                 const parts = topic.split('/'); 
-                 // Expected parts: [prefix, serial, 'device', 'has_humidifier']
-                 if (parts.length >= 4) {
-                     const serial = parts[1];
-                     const valueStr = message.toString();
-                     
-                     console.log(`[MQTT:${this.userId}] DETECTED HUMIDIFIER CAPABILITY: ${serial} = ${valueStr}`);
-                     
-                     // 1. Force update to database
-                     const deviceObj = await this.deviceState.get(serial, `device.${serial}`);
-                     if (deviceObj) {
-                         const newVal = valueStr === 'true';
+                 const deviceObj = await this.deviceState.get(detectedSerial, `device.${detectedSerial}`);
+                 if (deviceObj) {
+                     // Only write to DB if the value is actually changing
+                     if (deviceObj.value.has_humidifier !== detectedCapability) {
+                         const newValue = { ...deviceObj.value, has_humidifier: detectedCapability };
+                         await this.deviceState.upsert(
+                           detectedSerial, 
+                           `device.${detectedSerial}`, 
+                           deviceObj.object_revision + 1, 
+                           Date.now(), 
+                           newValue
+                         );
                          
-                         // Update DB if value changed or is undefined
-                         if (deviceObj.value.has_humidifier !== newVal) {
-                             const newValue = { ...deviceObj.value, has_humidifier: newVal };
-                             await this.deviceState.upsert(serial, `device.${serial}`, deviceObj.object_revision + 1, Date.now(), newValue);
-                             
-                             // 2. Trigger Discovery Update immediately so entities appear
-                             // We pass 'true' to force the update even if isReady is false
-                             await this.publishHomeAssistantState(serial, true);
-                         }
+                         // Force a state publish to refresh Home Assistant entities immediately
+                         await this.publishHomeAssistantState(detectedSerial, true);
                      }
                  }
              } catch (e) {
-                 console.error(`[MQTT:${this.userId}] Error processing humidifier update:`, e);
+                 console.error(`[MQTT:${this.userId}] Error updating detected humidifier state:`, e);
              }
         }
-        // ----------------------------------------
+        // -------------------------------------------------------------------
 
         // Pass everything else to standard handler
         await this.handleCommand(topic, message);
@@ -313,14 +354,18 @@ export class MqttIntegration extends BaseIntegration {
     if (this.config.publishRaw !== false) {
       patterns.push(...getCommandTopicPatterns(prefix));
       
-      // --- ADDED ---
-      // Subscribe to raw updates from the thermostat so we catch 'has_humidifier'
+      // Subscribe to raw updates from the thermostat
       patterns.push(`${prefix}/+/device/+`); 
-      // -------------
     }
 
     if (this.config.homeAssistantDiscovery) {
+      // Subscribe to HA Set commands
       patterns.push(`${prefix}/+/ha/+/set`);
+
+      // NEW: Subscribe to these specific HA status topics so we can listen 
+      // for the "humidifier_action" and "has_humidifier" events you requested.
+      patterns.push(`${prefix}/+/ha/humidifier_action`);
+      patterns.push(`${prefix}/+/ha/has_humidifier`);
     }
 
     for (const pattern of patterns) {
@@ -352,10 +397,6 @@ export class MqttIntegration extends BaseIntegration {
 
       const parsed = parseCommandTopic(topic, prefix);
       if (!parsed) {
-        // Reduced log noise for raw updates we aren't handling explicitly
-        if (!topic.includes('/device/has_humidifier')) {
-             // console.warn(`[MQTT:${this.userId}] Invalid command topic: ${topic}`);
-        }
         return;
       }
 
