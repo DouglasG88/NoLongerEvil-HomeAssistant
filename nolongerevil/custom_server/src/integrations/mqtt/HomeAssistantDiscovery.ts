@@ -20,6 +20,7 @@ export function buildClimateDiscovery(
   return {
     unique_id: `nolongerevil_${serial}`,
     name: deviceName,
+    // Updated to use default_entity_id to match newer HA standards
     default_entity_id: `climate.nest_${serial}`,
     device: {
       identifiers: [`nolongerevil_${serial}`],
@@ -63,6 +64,7 @@ export function buildClimateDiscovery(
 
 /**
  * Build Home Assistant discovery payload for Humidifier
+ * ADDED: Basic Humidifier configuration
  */
 export function buildHumidifierDiscovery(
   serial: string,
@@ -82,27 +84,27 @@ export function buildHumidifierDiscovery(
       payload_available: 'online',
       payload_not_available: 'offline',
     },
+    // Command Topics
     command_topic: `${topicPrefix}/${serial}/ha/humidifier_enabled/set`,
     state_topic: `${topicPrefix}/${serial}/ha/humidifier_enabled`,
-    payload_on: 'true',
-    payload_off: 'false',
     target_humidity_command_topic: `${topicPrefix}/${serial}/ha/target_humidity/set`,
     target_humidity_state_topic: `${topicPrefix}/${serial}/device/target_humidity`,
-    min_humidity: 10,
-    max_humidity: 60,
+    // State Reporting
     action_topic: `${topicPrefix}/${serial}/ha/humidifier_action`,
     current_humidity_topic: `${topicPrefix}/${serial}/ha/current_humidity`,
+    // Configuration
+    min_humidity: 10,
+    max_humidity: 60,
+    payload_on: 'true',
+    payload_off: 'false',
     device_class: 'humidifier',
-    origin: {
-        name: 'NoLongerEvil',
-        sw_version: '1.0.0'
-    },
     qos: 1
   };
 }
 
 /**
- * Build Home Assistant discovery payload for Humidifier Status (Idle/Humidifying)
+ * Build Home Assistant discovery payload for Humidifier Status
+ * ADDED: Shows "Humidifying" or "Idle"
  */
 export function buildHumidifierActionSensorDiscovery(
   serial: string,
@@ -311,8 +313,7 @@ export async function publishThermostatDiscovery(
       climateConfig
     );
 
-    console.log(`[HA Discovery] ${serial} publishing humidifier entities`);
-      
+    // ADDED: Always publish Humidifier Discovery (No checks, no logic)
     const humConfig = buildHumidifierDiscovery(serial, deviceName, topicPrefix);
     await publishDiscoveryMessage(
       client,
@@ -326,6 +327,7 @@ export async function publishThermostatDiscovery(
       `${discoveryPrefix}/sensor/nest_${serial}/humidifier_status/config`,
       humStatusConfig
     );
+    // END ADDED
 
     const tempConfig = buildTemperatureSensorDiscovery(serial, topicPrefix);
     await publishDiscoveryMessage(
@@ -377,7 +379,7 @@ export async function publishThermostatDiscovery(
 }
 
 /**
- * Publish a single discovery message (with error handling)
+ * Publish a single discovery message
  */
 async function publishDiscoveryMessage(
   client: mqtt.MqttClient,
@@ -398,7 +400,7 @@ async function publishDiscoveryMessage(
 }
 
 /**
- * Remove discovery messages for a device (when device is removed)
+ * Remove discovery messages for a device
  */
 export async function removeDeviceDiscovery(
   client: mqtt.MqttClient,
@@ -407,8 +409,10 @@ export async function removeDeviceDiscovery(
 ): Promise<void> {
   const topics = [
     `${discoveryPrefix}/climate/nest_${serial}/thermostat/config`,
+    // ADDED: Topics to remove humidifier entities
     `${discoveryPrefix}/humidifier/nest_${serial}/humidifier/config`,
     `${discoveryPrefix}/sensor/nest_${serial}/humidifier_status/config`,
+    // END ADDED
     `${discoveryPrefix}/sensor/nest_${serial}/temperature/config`,
     `${discoveryPrefix}/sensor/nest_${serial}/humidity/config`,
     `${discoveryPrefix}/sensor/nest_${serial}/outdoor_temperature/config`,
