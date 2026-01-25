@@ -28,6 +28,7 @@ import {
   haModeToNest,
   deriveHvacAction,
   deriveFanMode,
+  // ADDED: Helper for humidifier status
   deriveHumidifierAction, 
   isDeviceAway,
   isFanRunning,
@@ -426,7 +427,8 @@ export class MqttIntegration extends BaseIntegration {
             await this.updateDeviceValue(serial, deviceObj, 'eco', { mode: 'manual-eco', leaf: true });
           }
           break;
-
+        
+        // ADDED: Humidifier Commands
         case 'target_humidity':
             let humVal = parseFloat(valueStr);
             if (!isNaN(humVal) && humVal >= 10 && humVal <= 60) {
@@ -445,7 +447,6 @@ export class MqttIntegration extends BaseIntegration {
               const currentTgt = sharedObj.value.target_humidity;
               const isValidTarget = (currentTgt !== undefined && currentTgt >= 10 && currentTgt <= 60);
               const safeTgt = isValidTarget ? currentTgt : 40;
-              
               await this.updateSharedFields(serial, sharedObj, { target_humidity_enabled: true, target_humidity: safeTgt });
               await this.updateDeviceFields(serial, deviceObj, { target_humidity_enabled: true, target_humidity: safeTgt });
             } else {
@@ -453,6 +454,7 @@ export class MqttIntegration extends BaseIntegration {
               await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', false);
             }
             break;
+        // END ADDED
 
         default:
           console.warn(`[MQTT:${this.userId}] Unknown HA command: ${command}`);
@@ -676,8 +678,8 @@ export class MqttIntegration extends BaseIntegration {
       if (shared.target_temperature_high !== null && shared.target_temperature_high !== undefined) {
         await this.publish(`${prefix}/${serial}/ha/target_temperature_high`, String(shared.target_temperature_high), { retain: true, qos: 0 });
       }
-
-      // Humidifier State
+      
+      // ADDED: Publish Humidifier State
       const targetHum = device.target_humidity ?? shared.target_humidity;
       if (targetHum !== undefined && targetHum >= 10 && targetHum <= 60) {
         await this.publish(`${prefix}/${serial}/device/target_humidity`, String(targetHum), { retain: true, qos: 0 });
@@ -690,6 +692,7 @@ export class MqttIntegration extends BaseIntegration {
 
       const humAction = await deriveHumidifierAction(serial, this.deviceState);
       await this.publish(`${prefix}/${serial}/ha/humidifier_action`, humAction, { retain: true, qos: 0 });
+      // END ADDED
 
       const haMode = nestModeToHA(shared.target_temperature_type);
       await this.publish(`${prefix}/${serial}/ha/mode`, haMode, { retain: true, qos: 0 });
