@@ -10,7 +10,7 @@ import type { DeviceStateService } from '../../services/DeviceStateService';
 import { resolveDeviceName } from './helpers';
 
 /**
- * Build Home Assistant discovery payload for climate entity (main thermostat control)
+ * Build Home Assistant discovery payload for climate entity
  */
 export function buildClimateDiscovery(
   serial: string,
@@ -98,7 +98,7 @@ export function buildHumidifierDiscovery(
 }
 
 /**
- * NEW: Build Home Assistant discovery payload for Target Humidity Number (Slider)
+ * Build Home Assistant discovery payload for Target Humidity Number (Slider)
  */
 export function buildHumidifierNumberDiscovery(
   serial: string,
@@ -131,7 +131,7 @@ export function buildHumidifierNumberDiscovery(
 }
 
 /**
- * NEW: Build Home Assistant discovery payload for Humidifier Enabled Switch
+ * Build Home Assistant discovery payload for Humidifier Enabled Switch
  */
 export function buildHumidifierSwitchDiscovery(
   serial: string,
@@ -267,6 +267,87 @@ export function buildOutdoorTemperatureSensorDiscovery(
 }
 
 /**
+ * Build Home Assistant discovery payload for Battery Voltage
+ */
+export function buildBatteryVoltageSensorDiscovery(
+  serial: string,
+  topicPrefix: string
+): any {
+  return {
+    unique_id: `nolongerevil_${serial}_battery_voltage`,
+    name: `Battery Voltage`,
+    default_entity_id: `sensor.nest_${serial}_battery_voltage`,
+    device: {
+      identifiers: [`nolongerevil_${serial}`],
+    },
+    state_topic: `${topicPrefix}/${serial}/ha/battery_voltage`,
+    unit_of_measurement: 'V',
+    device_class: 'voltage',
+    state_class: 'measurement',
+    availability: {
+      topic: `${topicPrefix}/${serial}/availability`,
+      payload_available: 'online',
+      payload_not_available: 'offline',
+    },
+    qos: 0,
+  };
+}
+
+/**
+ * Build Home Assistant discovery payload for Voc (Open Circuit Voltage)
+ */
+export function buildVocSensorDiscovery(
+  serial: string,
+  topicPrefix: string
+): any {
+  return {
+    unique_id: `nolongerevil_${serial}_voc`,
+    name: `Voc (Open Circuit)`,
+    default_entity_id: `sensor.nest_${serial}_voc`,
+    device: {
+      identifiers: [`nolongerevil_${serial}`],
+    },
+    state_topic: `${topicPrefix}/${serial}/ha/voc`,
+    unit_of_measurement: 'V',
+    device_class: 'voltage',
+    state_class: 'measurement',
+    availability: {
+      topic: `${topicPrefix}/${serial}/availability`,
+      payload_available: 'online',
+      payload_not_available: 'offline',
+    },
+    qos: 0,
+  };
+}
+
+/**
+ * Build Home Assistant discovery payload for Vin (Input Voltage)
+ */
+export function buildVinSensorDiscovery(
+  serial: string,
+  topicPrefix: string
+): any {
+  return {
+    unique_id: `nolongerevil_${serial}_vin`,
+    name: `Vin (Input Voltage)`,
+    default_entity_id: `sensor.nest_${serial}_vin`,
+    device: {
+      identifiers: [`nolongerevil_${serial}`],
+    },
+    state_topic: `${topicPrefix}/${serial}/ha/vin`,
+    unit_of_measurement: 'V',
+    device_class: 'voltage',
+    state_class: 'measurement',
+    availability: {
+      topic: `${topicPrefix}/${serial}/availability`,
+      payload_available: 'online',
+      payload_not_available: 'offline',
+    },
+    qos: 0,
+  };
+}
+
+/**
  * Build Home Assistant discovery payload for occupancy binary sensor
  */
 export function buildOccupancyBinarySensorDiscovery(
@@ -362,6 +443,7 @@ export async function publishThermostatDiscovery(
 
     console.log(`[HA Discovery] Publishing discovery for ${serial} (${deviceName})`);
 
+    // 1. Climate
     const climateConfig = buildClimateDiscovery(serial, deviceName, topicPrefix);
     await publishDiscoveryMessage(
       client,
@@ -369,7 +451,8 @@ export async function publishThermostatDiscovery(
       climateConfig
     );
 
-    // Humidifier (Domain)
+    // 2. Humidifier (Domain)
+    console.log(`[HA Discovery] Publishing Humidifier Entity for ${serial}`);
     const humConfig = buildHumidifierDiscovery(serial, deviceName, topicPrefix);
     await publishDiscoveryMessage(
       client,
@@ -377,7 +460,8 @@ export async function publishThermostatDiscovery(
       humConfig
     );
 
-    // ADDED: Number (Slider) for Target Humidity
+    // 3. Number (Slider)
+    console.log(`[HA Discovery] Publishing Target Humidity Number (Slider) for ${serial}`);
     const humNumberConfig = buildHumidifierNumberDiscovery(serial, deviceName, topicPrefix);
     await publishDiscoveryMessage(
       client,
@@ -385,13 +469,39 @@ export async function publishThermostatDiscovery(
       humNumberConfig
     );
 
-    // ADDED: Switch for Enabled/Disabled
+    // 4. Switch
+    console.log(`[HA Discovery] Publishing Humidifier Enabled Switch for ${serial}`);
     const humSwitchConfig = buildHumidifierSwitchDiscovery(serial, deviceName, topicPrefix);
     await publishDiscoveryMessage(
       client,
       `${discoveryPrefix}/switch/nest_${serial}/humidifier_enabled/config`,
       humSwitchConfig
     );
+
+    // 5. Voltage Sensors (NEW)
+    console.log(`[HA Discovery] Publishing Voltage Sensors for ${serial}`);
+    
+    const battConfig = buildBatteryVoltageSensorDiscovery(serial, topicPrefix);
+    await publishDiscoveryMessage(
+      client,
+      `${discoveryPrefix}/sensor/nest_${serial}/battery_voltage/config`,
+      battConfig
+    );
+
+    const vocConfig = buildVocSensorDiscovery(serial, topicPrefix);
+    await publishDiscoveryMessage(
+      client,
+      `${discoveryPrefix}/sensor/nest_${serial}/voc/config`,
+      vocConfig
+    );
+
+    const vinConfig = buildVinSensorDiscovery(serial, topicPrefix);
+    await publishDiscoveryMessage(
+      client,
+      `${discoveryPrefix}/sensor/nest_${serial}/vin/config`,
+      vinConfig
+    );
+    // END NEW SENSORS
 
     const humStatusConfig = buildHumidifierActionSensorDiscovery(serial, deviceName, topicPrefix);
     await publishDiscoveryMessage(
@@ -481,10 +591,8 @@ export async function removeDeviceDiscovery(
   const topics = [
     `${discoveryPrefix}/climate/nest_${serial}/thermostat/config`,
     `${discoveryPrefix}/humidifier/nest_${serial}/humidifier/config`,
-    // ADDED: Cleanup for new entities
     `${discoveryPrefix}/number/nest_${serial}/target_humidity/config`,
     `${discoveryPrefix}/switch/nest_${serial}/humidifier_enabled/config`,
-    // END ADDED
     `${discoveryPrefix}/sensor/nest_${serial}/humidifier_status/config`,
     `${discoveryPrefix}/sensor/nest_${serial}/temperature/config`,
     `${discoveryPrefix}/sensor/nest_${serial}/humidity/config`,
@@ -492,6 +600,10 @@ export async function removeDeviceDiscovery(
     `${discoveryPrefix}/binary_sensor/nest_${serial}/occupancy/config`,
     `${discoveryPrefix}/binary_sensor/nest_${serial}/fan/config`,
     `${discoveryPrefix}/binary_sensor/nest_${serial}/leaf/config`,
+    // ADDED: Removal for new voltage sensors
+    `${discoveryPrefix}/sensor/nest_${serial}/battery_voltage/config`,
+    `${discoveryPrefix}/sensor/nest_${serial}/voc/config`,
+    `${discoveryPrefix}/sensor/nest_${serial}/vin/config`,
   ];
 
   for (const topic of topics) {
