@@ -28,7 +28,6 @@ import {
   haModeToNest,
   deriveHvacAction,
   deriveFanMode,
-  // ADDED: Helper for humidifier status
   deriveHumidifierAction, 
   isDeviceAway,
   isFanRunning,
@@ -97,11 +96,12 @@ export class MqttIntegration extends BaseIntegration {
       clearInterval(this.deviceWatchInterval);
     }
 
+    // Polling every 5 minutes (300,000ms) to check for new devices
     this.deviceWatchInterval = setInterval(async () => {
       await this.checkForDeviceChanges();
-    }, 10000);
+    }, 300000); 
 
-    console.log(`[MQTT:${this.userId}] Started watching for device changes (polling every 10s)`);
+    console.log(`[MQTT:${this.userId}] Started watching for device changes (polling every 5m)`);
   }
 
   /**
@@ -428,7 +428,7 @@ export class MqttIntegration extends BaseIntegration {
           }
           break;
         
-        // ADDED: Humidifier Commands
+        // Humidifier Commands
         case 'target_humidity':
             let humVal = parseFloat(valueStr);
             if (!isNaN(humVal) && humVal >= 10 && humVal <= 60) {
@@ -454,7 +454,6 @@ export class MqttIntegration extends BaseIntegration {
               await this.updateDeviceValue(serial, deviceObj, 'target_humidity_enabled', false);
             }
             break;
-        // END ADDED
 
         default:
           console.warn(`[MQTT:${this.userId}] Unknown HA command: ${command}`);
@@ -679,7 +678,7 @@ export class MqttIntegration extends BaseIntegration {
         await this.publish(`${prefix}/${serial}/ha/target_temperature_high`, String(shared.target_temperature_high), { retain: true, qos: 0 });
       }
       
-      // ADDED: Publish Humidifier State
+      // Humidifier State
       const targetHum = device.target_humidity ?? shared.target_humidity;
       if (targetHum !== undefined && targetHum >= 10 && targetHum <= 60) {
         await this.publish(`${prefix}/${serial}/device/target_humidity`, String(targetHum), { retain: true, qos: 0 });
@@ -692,6 +691,19 @@ export class MqttIntegration extends BaseIntegration {
 
       const humAction = await deriveHumidifierAction(serial, this.deviceState);
       await this.publish(`${prefix}/${serial}/ha/humidifier_action`, humAction, { retain: true, qos: 0 });
+
+      // ADDED: Publish Voltage Sensors
+      // Note: Nest uses 'battery_level' or 'battery_voltage' depending on FW. 
+      // 'battery_voltage' is typically the raw V value.
+      if (device.battery_voltage !== undefined) {
+        await this.publish(`${prefix}/${serial}/ha/battery_voltage`, String(device.battery_voltage), { retain: true, qos: 0 });
+      }
+      if (device.voc !== undefined) {
+        await this.publish(`${prefix}/${serial}/ha/voc`, String(device.voc), { retain: true, qos: 0 });
+      }
+      if (device.vin !== undefined) {
+        await this.publish(`${prefix}/${serial}/ha/vin`, String(device.vin), { retain: true, qos: 0 });
+      }
       // END ADDED
 
       const haMode = nestModeToHA(shared.target_temperature_type);
