@@ -692,19 +692,11 @@ export class MqttIntegration extends BaseIntegration {
       const humAction = await deriveHumidifierAction(serial, this.deviceState);
       await this.publish(`${prefix}/${serial}/ha/humidifier_action`, humAction, { retain: true, qos: 0 });
 
-      // ADDED: Publish Voltage Sensors
-      // Note: Nest uses 'battery_level' or 'battery_voltage' depending on FW. 
-      // 'battery_voltage' is typically the raw V value.
-      if (device.battery_voltage !== undefined) {
-        await this.publish(`${prefix}/${serial}/ha/battery_voltage`, String(device.battery_voltage), { retain: true, qos: 0 });
+      // Battery Voltage (Mapped from battery_level)
+      const battery = device.battery_level ?? device.battery_voltage;
+      if (battery !== undefined) {
+        await this.publish(`${prefix}/${serial}/ha/battery_voltage`, String(battery), { retain: true, qos: 0 });
       }
-      if (device.voc !== undefined) {
-        await this.publish(`${prefix}/${serial}/ha/voc`, String(device.voc), { retain: true, qos: 0 });
-      }
-      if (device.vin !== undefined) {
-        await this.publish(`${prefix}/${serial}/ha/vin`, String(device.vin), { retain: true, qos: 0 });
-      }
-      // END ADDED
 
       const haMode = nestModeToHA(shared.target_temperature_type);
       await this.publish(`${prefix}/${serial}/ha/mode`, haMode, { retain: true, qos: 0 });
