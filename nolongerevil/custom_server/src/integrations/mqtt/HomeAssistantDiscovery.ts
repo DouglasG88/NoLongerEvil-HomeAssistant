@@ -20,7 +20,6 @@ export function buildClimateDiscovery(
   return {
     unique_id: `nolongerevil_${serial}`,
     name: deviceName,
-    // Updated to use default_entity_id to match newer HA standards
     default_entity_id: `climate.nest_${serial}`,
     device: {
       identifiers: [`nolongerevil_${serial}`],
@@ -64,7 +63,6 @@ export function buildClimateDiscovery(
 
 /**
  * Build Home Assistant discovery payload for Humidifier
- * ADDED: Basic Humidifier configuration
  */
 export function buildHumidifierDiscovery(
   serial: string,
@@ -84,15 +82,12 @@ export function buildHumidifierDiscovery(
       payload_available: 'online',
       payload_not_available: 'offline',
     },
-    // Command Topics
     command_topic: `${topicPrefix}/${serial}/ha/humidifier_enabled/set`,
     state_topic: `${topicPrefix}/${serial}/ha/humidifier_enabled`,
     target_humidity_command_topic: `${topicPrefix}/${serial}/ha/target_humidity/set`,
     target_humidity_state_topic: `${topicPrefix}/${serial}/device/target_humidity`,
-    // State Reporting
     action_topic: `${topicPrefix}/${serial}/ha/humidifier_action`,
     current_humidity_topic: `${topicPrefix}/${serial}/ha/current_humidity`,
-    // Configuration
     min_humidity: 10,
     max_humidity: 60,
     payload_on: 'true',
@@ -103,8 +98,69 @@ export function buildHumidifierDiscovery(
 }
 
 /**
+ * NEW: Build Home Assistant discovery payload for Target Humidity Number (Slider)
+ */
+export function buildHumidifierNumberDiscovery(
+  serial: string,
+  deviceName: string,
+  topicPrefix: string
+): any {
+  return {
+    unique_id: `nolongerevil_${serial}_target_humidity_number`,
+    name: `${deviceName} Target Humidity`,
+    default_entity_id: `number.nest_${serial}_target_humidity`,
+    device: {
+      identifiers: [`nolongerevil_${serial}`],
+    },
+    availability: {
+      topic: `${topicPrefix}/${serial}/availability`,
+      payload_available: 'online',
+      payload_not_available: 'offline',
+    },
+    command_topic: `${topicPrefix}/${serial}/ha/target_humidity/set`,
+    state_topic: `${topicPrefix}/${serial}/device/target_humidity`,
+    min: 10,
+    max: 60,
+    step: 5,
+    unit_of_measurement: '%',
+    icon: 'mdi:water-percent',
+    mode: 'slider',
+    device_class: 'humidity',
+    qos: 1
+  };
+}
+
+/**
+ * NEW: Build Home Assistant discovery payload for Humidifier Enabled Switch
+ */
+export function buildHumidifierSwitchDiscovery(
+  serial: string,
+  deviceName: string,
+  topicPrefix: string
+): any {
+  return {
+    unique_id: `nolongerevil_${serial}_humidifier_enabled_switch`,
+    name: `${deviceName} Humidifier Enabled`,
+    default_entity_id: `switch.nest_${serial}_humidifier_enabled`,
+    device: {
+      identifiers: [`nolongerevil_${serial}`],
+    },
+    availability: {
+      topic: `${topicPrefix}/${serial}/availability`,
+      payload_available: 'online',
+      payload_not_available: 'offline',
+    },
+    command_topic: `${topicPrefix}/${serial}/ha/humidifier_enabled/set`,
+    state_topic: `${topicPrefix}/${serial}/ha/humidifier_enabled`,
+    payload_on: 'true',
+    payload_off: 'false',
+    icon: 'mdi:air-humidifier',
+    qos: 1
+  };
+}
+
+/**
  * Build Home Assistant discovery payload for Humidifier Status
- * ADDED: Shows "Humidifying" or "Idle"
  */
 export function buildHumidifierActionSensorDiscovery(
   serial: string,
@@ -313,12 +369,28 @@ export async function publishThermostatDiscovery(
       climateConfig
     );
 
-    // ADDED: Always publish Humidifier Discovery (No checks, no logic)
+    // Humidifier (Domain)
     const humConfig = buildHumidifierDiscovery(serial, deviceName, topicPrefix);
     await publishDiscoveryMessage(
       client,
       `${discoveryPrefix}/humidifier/nest_${serial}/humidifier/config`,
       humConfig
+    );
+
+    // ADDED: Number (Slider) for Target Humidity
+    const humNumberConfig = buildHumidifierNumberDiscovery(serial, deviceName, topicPrefix);
+    await publishDiscoveryMessage(
+      client,
+      `${discoveryPrefix}/number/nest_${serial}/target_humidity/config`,
+      humNumberConfig
+    );
+
+    // ADDED: Switch for Enabled/Disabled
+    const humSwitchConfig = buildHumidifierSwitchDiscovery(serial, deviceName, topicPrefix);
+    await publishDiscoveryMessage(
+      client,
+      `${discoveryPrefix}/switch/nest_${serial}/humidifier_enabled/config`,
+      humSwitchConfig
     );
 
     const humStatusConfig = buildHumidifierActionSensorDiscovery(serial, deviceName, topicPrefix);
@@ -327,7 +399,6 @@ export async function publishThermostatDiscovery(
       `${discoveryPrefix}/sensor/nest_${serial}/humidifier_status/config`,
       humStatusConfig
     );
-    // END ADDED
 
     const tempConfig = buildTemperatureSensorDiscovery(serial, topicPrefix);
     await publishDiscoveryMessage(
@@ -409,10 +480,12 @@ export async function removeDeviceDiscovery(
 ): Promise<void> {
   const topics = [
     `${discoveryPrefix}/climate/nest_${serial}/thermostat/config`,
-    // ADDED: Topics to remove humidifier entities
     `${discoveryPrefix}/humidifier/nest_${serial}/humidifier/config`,
-    `${discoveryPrefix}/sensor/nest_${serial}/humidifier_status/config`,
+    // ADDED: Cleanup for new entities
+    `${discoveryPrefix}/number/nest_${serial}/target_humidity/config`,
+    `${discoveryPrefix}/switch/nest_${serial}/humidifier_enabled/config`,
     // END ADDED
+    `${discoveryPrefix}/sensor/nest_${serial}/humidifier_status/config`,
     `${discoveryPrefix}/sensor/nest_${serial}/temperature/config`,
     `${discoveryPrefix}/sensor/nest_${serial}/humidity/config`,
     `${discoveryPrefix}/sensor/nest_${serial}/outdoor_temperature/config`,
