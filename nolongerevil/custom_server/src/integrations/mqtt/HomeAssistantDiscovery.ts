@@ -294,60 +294,6 @@ export function buildBatteryVoltageSensorDiscovery(
 }
 
 /**
- * Build Home Assistant discovery payload for Voc (Open Circuit Voltage)
- */
-export function buildVocSensorDiscovery(
-  serial: string,
-  topicPrefix: string
-): any {
-  return {
-    unique_id: `nolongerevil_${serial}_voc`,
-    name: `Voc (Open Circuit)`,
-    default_entity_id: `sensor.nest_${serial}_voc`,
-    device: {
-      identifiers: [`nolongerevil_${serial}`],
-    },
-    state_topic: `${topicPrefix}/${serial}/ha/voc`,
-    unit_of_measurement: 'V',
-    device_class: 'voltage',
-    state_class: 'measurement',
-    availability: {
-      topic: `${topicPrefix}/${serial}/availability`,
-      payload_available: 'online',
-      payload_not_available: 'offline',
-    },
-    qos: 0,
-  };
-}
-
-/**
- * Build Home Assistant discovery payload for Vin (Input Voltage)
- */
-export function buildVinSensorDiscovery(
-  serial: string,
-  topicPrefix: string
-): any {
-  return {
-    unique_id: `nolongerevil_${serial}_vin`,
-    name: `Vin (Input Voltage)`,
-    default_entity_id: `sensor.nest_${serial}_vin`,
-    device: {
-      identifiers: [`nolongerevil_${serial}`],
-    },
-    state_topic: `${topicPrefix}/${serial}/ha/vin`,
-    unit_of_measurement: 'V',
-    device_class: 'voltage',
-    state_class: 'measurement',
-    availability: {
-      topic: `${topicPrefix}/${serial}/availability`,
-      payload_available: 'online',
-      payload_not_available: 'offline',
-    },
-    qos: 0,
-  };
-}
-
-/**
  * Build Home Assistant discovery payload for occupancy binary sensor
  */
 export function buildOccupancyBinarySensorDiscovery(
@@ -478,9 +424,8 @@ export async function publishThermostatDiscovery(
       humSwitchConfig
     );
 
-    // 5. Voltage Sensors (NEW)
-    console.log(`[HA Discovery] Publishing Voltage Sensors for ${serial}`);
-    
+    // 5. Battery Voltage Only
+    console.log(`[HA Discovery] Publishing Battery Voltage for ${serial}`);
     const battConfig = buildBatteryVoltageSensorDiscovery(serial, topicPrefix);
     await publishDiscoveryMessage(
       client,
@@ -488,20 +433,7 @@ export async function publishThermostatDiscovery(
       battConfig
     );
 
-    const vocConfig = buildVocSensorDiscovery(serial, topicPrefix);
-    await publishDiscoveryMessage(
-      client,
-      `${discoveryPrefix}/sensor/nest_${serial}/voc/config`,
-      vocConfig
-    );
-
-    const vinConfig = buildVinSensorDiscovery(serial, topicPrefix);
-    await publishDiscoveryMessage(
-      client,
-      `${discoveryPrefix}/sensor/nest_${serial}/vin/config`,
-      vinConfig
-    );
-    // END NEW SENSORS
+    // (Removed Vin and Voc)
 
     const humStatusConfig = buildHumidifierActionSensorDiscovery(serial, deviceName, topicPrefix);
     await publishDiscoveryMessage(
@@ -600,10 +532,8 @@ export async function removeDeviceDiscovery(
     `${discoveryPrefix}/binary_sensor/nest_${serial}/occupancy/config`,
     `${discoveryPrefix}/binary_sensor/nest_${serial}/fan/config`,
     `${discoveryPrefix}/binary_sensor/nest_${serial}/leaf/config`,
-    // ADDED: Removal for new voltage sensors
+    // Only Battery Voltage removal now
     `${discoveryPrefix}/sensor/nest_${serial}/battery_voltage/config`,
-    `${discoveryPrefix}/sensor/nest_${serial}/voc/config`,
-    `${discoveryPrefix}/sensor/nest_${serial}/vin/config`,
   ];
 
   for (const topic of topics) {
